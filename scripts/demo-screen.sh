@@ -114,9 +114,42 @@ P4="while :; do
 # Built as its own mode because switching a pane mid-take means stopping
 # a loop, typing, and getting back — three chances to fumble on camera.
 if [ "$MODE" = leak ]; then
-    P2="while :; do clear; ./scripts/show-decision.sh $DEV 2>/dev/null; sleep 3; done"
+    # No input pane. `break.sh leak` is typed in a separate window, which
+    # frees the fourth box for the one thing the other three cannot show.
+    #
+    #   1  what the provider received          the damage
+    #   2  what the model was shown and said   the decision
+    #   3  what the system did about it        the process
+    #   4  the policy line that caused it      the cause
+    #
+    # The fourth is the point of this fault class: the configuration is
+    # syntactically fine, internally consistent, passes a diff against the
+    # golden config, and the session stays up. One word changes -- reject
+    # to accept -- and the damage is entirely in the adj-rib-out. Showing
+    # that word flip back is showing the fix land on the device.
+    P1="while :; do out=\$(./scripts/show-leak.sh 2>/dev/null); clear; printf '%s\\n' \"\$out\"; sleep 3; done"
+    P2="while :; do out=\$(./scripts/show-decision.sh $DEV 2>/dev/null); clear; printf '%s\\n' \"\$out\"; sleep 3; done"
     P3="./scripts/watch-heal.sh 10"
-    P4="while :; do out=\$(./scripts/show-leak.sh 2>/dev/null); clear; printf '%s\\n' \"\$out\"; sleep 3; done"
+    # Two lines out of fourteen. The whole policy does not fit a quarter
+    # screen, and thirteen of its lines never change -- the one that does
+    # is the default action, and it changes by one word.
+    P4="while :; do
+ pol=\$(docker exec clab-selfheal-$DEV sr_cli -- info /routing-policy policy transit-out 2>/dev/null);
+ da=\$(printf '%s' \"\$pol\" | awk '/default-action/{d=1} d&&/policy-result/{print \$2; exit}');
+ clear;
+ echo '── 4  THE POLICY ON $DEV — ONE WORD ──'; echo;
+ echo '  policy transit-out'; echo;
+ echo '      statement 10    our-aggregates  ->  accept';
+ if [ \"\$da\" = accept ]; then
+   printf '      default-action  \033[31m%-14s\033[0m  <= EVERYTHING ELSE TOO\n' \"\$da\";
+   echo; echo '  Every route srl3 knows is offered to the provider.';
+ else
+   printf '      default-action  \033[32m%-14s\033[0m  <= and nothing else\n' \"\$da\";
+   echo; echo '  Only the aggregate leaves this AS.';
+ fi;
+ echo; echo '  The config is valid either way. The diff against the';
+ echo '  golden protocol config passes. The session stays up.';
+ sleep 3; done"
 fi
 
 # --- build the grid: 2 x 2 ----------------------------------------------
@@ -138,7 +171,7 @@ tmux select-layout -t "$SESSION:demo" tiled
 if [ "$MODE" = provision ]; then
     tmux send-keys -t "$SESSION:demo.0" "clear; echo '── 1  YOU TYPE HERE ──'; echo; echo '   ./scripts/bootstrap.sh'; echo; echo '   wait for: == converging the devices to their source of truth'; echo" C-m
 elif [ "$MODE" = leak ]; then
-    tmux send-keys -t "$SESSION:demo.0" "clear; echo '── 1  YOU TYPE HERE ──'; echo; echo '   ./scripts/break.sh leak'; echo; echo '   then touch nothing. Watch pane 4.'; echo" C-m
+    tmux send-keys -t "$SESSION:demo.0" "$P1" C-m
 else
     tmux send-keys -t "$SESSION:demo.0" "clear; echo '── 1  YOU TYPE HERE ──'; echo; echo '   ./scripts/break.sh interface $DEV'; echo" C-m
 fi
