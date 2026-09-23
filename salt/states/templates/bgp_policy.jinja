@@ -1,0 +1,55 @@
+{#- The BGP service layer, rendered from NetBox.
+
+    Everything here answers one of two questions an ISP asks every week:
+    what do we announce, and what do we accept. Neither is in the golden
+    config, because neither is stable -- they are edited far more often
+    than IS-IS is, usually at speed, and that is exactly where the damage
+    comes from.
+
+    Because this goes through audited.config, a prefix-list edited on the
+    box by hand shows up as a diff against NetBox on the next beacon pass,
+    with the trace id and the operator's name attached.
+-#}
+{# ---- what we originate ---- #}
+set / network-instance default next-hop-groups group blackhole blackhole generate-icmp true
+{# A blackhole aggregate: how an ISP originates space it has not fully
+   assigned. Without a route in the table there is nothing to announce. #}
+{%- for entry in bgp.get('originate', []) %}
+set / network-instance default static-routes route {{ entry.prefix }} admin-state enable
+set / network-instance default static-routes route {{ entry.prefix }} next-hop-group blackhole
+{%- endfor %}
+{%- set t = bgp.get('transit', {}) %}
+{%- if t %}
+{# ---- prefix sets ---- #}
+{%- for p in t.get('export', {}).get('prefixes', []) %}
+set / routing-policy prefix-set our-aggregates prefix {{ p }} mask-length-range exact
+{%- endfor %}
+{%- for p in t.get('import', {}).get('reject_own', []) %}
+set / routing-policy prefix-set our-space prefix {{ p }} mask-length-range {{ p.split('/')[1] }}..32
+{%- endfor %}
+{%- for p in t.get('import', {}).get('reject_bogons', []) %}
+set / routing-policy prefix-set bogons prefix {{ p }} mask-length-range {{ p.split('/')[1] }}..32
+{%- endfor %}
+set / routing-policy prefix-set transit-acceptable prefix 0.0.0.0/0 mask-length-range 0..{{ t.get('import', {}).get('max_prefix_length', 24) }}
+{# ---- import: what we accept from the provider ----
+   Order matters and IS the policy. Bogons first, then our own space -- never
+   accept your own prefixes back from upstream -- then everything within the
+   length limit, then reject. #}
+set / routing-policy policy transit-in statement 10 match prefix-set bogons
+set / routing-policy policy transit-in statement 10 action policy-result reject
+set / routing-policy policy transit-in statement 20 match prefix-set our-space
+set / routing-policy policy transit-in statement 20 action policy-result reject
+set / routing-policy policy transit-in statement 30 match prefix-set transit-acceptable
+set / routing-policy policy transit-in statement 30 action policy-result accept
+set / routing-policy policy transit-in default-action policy-result reject
+{# ---- export: what we announce ----
+   Default-reject at the end. An ISP that accidentally announces what it
+   learned from one provider to another has become a transit provider for
+   the internet, briefly and expensively. #}
+set / routing-policy policy transit-out statement 10 match prefix-set our-aggregates
+set / routing-policy policy transit-out statement 10 action policy-result accept
+set / routing-policy policy transit-out default-action policy-result reject
+{# ---- attach ---- #}
+set / network-instance default protocols bgp group ebgp-transit import-policy [ transit-in ]
+set / network-instance default protocols bgp group ebgp-transit export-policy [ transit-out ]
+{%- endif %}

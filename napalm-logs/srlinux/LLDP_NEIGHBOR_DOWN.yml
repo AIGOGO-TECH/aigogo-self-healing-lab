@@ -1,0 +1,23 @@
+# lldp|4949|4949|00037|I: LLDP remote peer removed on interface
+# ethernet-1/1: System srl2 with chassis ID 1A:A1:01:FF:00:00, port
+# ethernet-1/1 with MAC 1A:A1:01:FF:00:00
+
+messages:
+  - error: LLDP_NEIGHBOR_DOWN
+    tag: lldp
+    values:
+      interface: ([\w\-\/\.]+)
+      remote_system_name: ([\w\-\.]+)
+      remote_chassis_id: ([\da-fA-F:]+)
+      remote_port: ([\w\-\/\.]+)
+      remote_port_mac: ([\da-fA-F:]+)
+    line: 'LLDP remote peer removed on interface {interface}: System {remote_system_name} with chassis ID {remote_chassis_id}, port {remote_port} with MAC {remote_port_mac}'
+    model: openconfig-lldp
+    # Deliberately empty. OpenConfig has no way to express "this neighbour
+    # is gone" -- you would be deleting a list entry, which a napalm-logs
+    # mapping cannot do -- so yang_message comes out as {}. The event name
+    # and message_details carry everything a consumer needs, and inventing
+    # a state field here would be worse than leaving it blank.
+    mapping:
+      variables: {}
+      static: {}

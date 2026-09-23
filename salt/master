@@ -1,0 +1,17 @@
+# Salt master — self-healing lab
+interface: 0.0.0.0
+user: root
+
+file_roots:
+  base:
+    - /srv/salt
+
+pillar_roots:
+  base:
+    - /srv/pillar
+
+# Proxy minions are started as separate processes; the master must not
+# expire their keys while a device is briefly unreachable.
+auto_accept: True
+
+log_level: info

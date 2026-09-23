@@ -1,0 +1,159 @@
+{
+  "id": "fe44b591-4f21-4aaa-888e-8832b038503c",
+  "name": "Self-Heal Incident Explainer",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "trigger",
+      "name": "Every 30s",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ES_URL }}/napalm-2*/_search",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"size\": 20,\n  \"sort\": [{\"data._stamp\": {\"order\": \"desc\", \"unmapped_type\": \"date\"}}],\n  \"query\": {\"bool\": {\"must\": [\n    {\"match\": {\"data.fun\": \"state.apply\"}},\n    {\"bool\": {\"should\": [\n      {\"match\": {\"data.fun_args\": \"sync_from_netbox\"}},\n      {\"match\": {\"data.fun_args\": \"sync_from_pillar\"}}\n    ], \"minimum_should_match\": 1}},\n    {\"range\": {\"data._stamp\": {\"gte\": \"now-2m\"}}}\n  ]}}\n}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.ES_AUTH_HEADER }}"
+            }
+          ]
+        }
+      },
+      "id": "query_es",
+      "name": "Query ES for recent heals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const hits = $input.first().json.hits.hits;\nconst out = [];\nfor (const h of hits) {\n  const d = h._source.data;\n  const ret = d.return;\n  if (!ret) continue;\n  for (const key of Object.keys(ret)) {\n    const st = ret[key];\n    const diff = st.changes && st.changes.diff;\n    if (diff && diff.trim()) {\n      out.push({\n        json: {\n          jid: d.jid,\n          minion: d.id,\n          diff,\n          stamp: d._stamp,\n          es_id: h._id,\n        },\n      });\n    }\n  }\n}\nreturn out;"
+      },
+      "id": "extract_diffs",
+      "name": "Extract healed diffs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OLLAMA_URL }}/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({model: \" + ($env.OLLAMA_MODEL || \"llama3.1\") + \", stream: false, prompt: \"You are writing a one-paragraph incident ticket for a network operations team. A self-healing automation system detected that a device config had drifted from its declared source of truth and automatically reverted it. Explain plainly what changed and that it was auto-remediated, no action needed. Device: \" + $json.minion + \". Diff: \" + $json.diff}) }}",
+        "options": {}
+      },
+      "id": "ask_ollama",
+      "name": "Ask local LLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ES_URL }}/napalm-tickets/_doc/{{ $('Extract healed diffs').item.json.jid }}-{{ $('Extract healed diffs').item.json.minion }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({jid: $('Extract healed diffs').item.json.jid, minion: $('Extract healed diffs').item.json.minion, diff: $('Extract healed diffs').item.json.diff, stamp: $('Extract healed diffs').item.json.stamp, ticket: $json.response}) }}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.ES_AUTH_HEADER }}"
+            }
+          ]
+        }
+      },
+      "id": "write_ticket",
+      "name": "Write ticket to ES",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Every 30s": {
+      "main": [
+        [
+          {
+            "node": "Query ES for recent heals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query ES for recent heals": {
+      "main": [
+        [
+          {
+            "node": "Extract healed diffs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract healed diffs": {
+      "main": [
+        [
+          {
+            "node": "Ask local LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask local LLM": {
+      "main": [
+        [
+          {
+            "node": "Write ticket to ES",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "active": true
+}

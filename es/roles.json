@@ -1,0 +1,148 @@
+{
+  "salt_writer": {
+    "cluster": [
+      "monitor"
+    ],
+    "indices": [
+      {
+        "names": [
+          "napalm-2*"
+        ],
+        "privileges": [
+          "create_index",
+          "manage",
+          "write",
+          "view_index_metadata"
+        ]
+      },
+      {
+        "names": [
+          "napalm-audit"
+        ],
+        "privileges": [
+          "read",
+          "create_doc",
+          "auto_configure"
+        ]
+      }
+    ]
+  },
+  "grafana_reader": {
+    "cluster": [
+      "monitor"
+    ],
+    "indices": [
+      {
+        "names": [
+          "napalm-*",
+          "docker-stats*",
+          "lab-logs*"
+        ],
+        "privileges": [
+          "read",
+          "view_index_metadata"
+        ]
+      },
+      {
+        "names": [
+          "napalm-escalations*"
+        ],
+        "privileges": [
+          "create_index",
+          "create_doc",
+          "auto_configure"
+        ]
+      }
+    ]
+  },
+  "n8n_agent": {
+    "cluster": [
+      "monitor"
+    ],
+    "indices": [
+      {
+        "names": [
+          "napalm-2*",
+          "napalm-remediations",
+          "napalm-rejected",
+          "napalm-tickets"
+        ],
+        "privileges": [
+          "read",
+          "write",
+          "create_index",
+          "view_index_metadata"
+        ]
+      },
+      {
+        "names": [
+          "napalm-audit"
+        ],
+        "privileges": [
+          "read",
+          "create_doc",
+          "auto_configure"
+        ]
+      }
+    ]
+  },
+  "stats_writer": {
+    "cluster": [
+      "monitor"
+    ],
+    "indices": [
+      {
+        "names": [
+          "docker-stats*"
+        ],
+        "privileges": [
+          "create_index",
+          "write",
+          "view_index_metadata"
+        ]
+      }
+    ]
+  },
+  "log_writer": {
+    "cluster": [
+      "monitor"
+    ],
+    "indices": [
+      {
+        "names": [
+          "lab-logs*"
+        ],
+        "privileges": [
+          "create_doc",
+          "auto_configure",
+          "view_index_metadata"
+        ]
+      }
+    ]
+  },
+  "watchdog": {
+    "cluster": [
+      "monitor"
+    ],
+    "indices": [
+      {
+        "names": [
+          "napalm-2*"
+        ],
+        "privileges": [
+          "read",
+          "view_index_metadata"
+        ]
+      },
+      {
+        "names": [
+          "napalm-audit"
+        ],
+        "privileges": [
+          "create_doc",
+          "auto_configure"
+        ]
+      }
+    ]
+  }
+}

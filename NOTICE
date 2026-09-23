@@ -1,0 +1,52 @@
+selfheal-lab
+Copyright 2026 AIGOGO TECH
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Built for a talk at mnNOG 8 — "Where AI belongs in network automation,
+and where it doesn't."
+
+    AIGOGO TECH — Ulaanbaatar, Mongolia
+    https://aigogo.tech
+
+Questions, corrections and pull requests are best raised as issues on the
+repository. That is the channel that is actually read.
+
+If you use this, the Apache licence asks you to keep this notice with it.
+That is the only thing asked for. It is a lab, it is meant to be taken
+apart, and the part worth reading is docs/lessons.md — every bug hit while
+building it, including the ones that were embarrassing.
+
+---
+
+Third-party components, each under its own licence. Everything marked
+[verified] was read out of the image this repository actually pulls,
+rather than taken from memory:
+
+    SaltStack / Salt          Apache Software License 2.0   [verified]
+    NAPALM                    Apache-2.0                    [verified]
+    NetBox                    Apache License                [verified]
+    Elasticsearch             Elastic License 2.0           [verified]
+    Grafana                   GNU AGPL v3                   [verified]
+    n8n                       LicenseRef-n8n-sustainable-use [verified]
+    Kibana                    Elastic License 2.0 / SSPL
+    Nokia SR Linux            container image, Nokia's terms
+    containerlab              BSD-3-Clause
+    Ollama                    MIT
+
+Three of those have conditions that matter if this becomes part of
+something commercial, and they are not the ones people expect:
+
+    Grafana is AGPL v3. Running a modified Grafana as a network service
+    obliges you to offer the modified source to its users.
+
+    Elasticsearch is the Elastic License 2.0, which forbids providing it
+    to third parties as a managed service.
+
+    n8n is a Sustainable Use License, not an open-source licence at all.
+    Internal use is fine; reselling n8n as part of a product is not.
+
+Nothing here re-licenses any of them. They are pulled as upstream images
+and used as intended. If you are considering building a product on this
+stack, read those three first -- swapping a component later is far more
+expensive than choosing differently now.

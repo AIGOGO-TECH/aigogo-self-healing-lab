@@ -1,0 +1,7 @@
+{#- P3: render SR Linux config from NetBox's interface descriptions.
+    This is the piece the ISP's slides marked "issues" — a real, working
+    render step from the declared source of truth, not a hand-maintained
+    naming convention nobody kept in sync with the field. -#}
+{%- for name, desc in interfaces.items() %}
+set / interface {{ name }} description "{{ desc }}"
+{%- endfor %}

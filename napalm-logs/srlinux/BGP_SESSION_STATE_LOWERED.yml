@@ -1,0 +1,26 @@
+# bgp|8610|8679|00056|W: In network-instance default, the BGP session with
+# VR default (1): Group ibgp: Peer 10.255.0.1 moved from higher state
+# ESTABLISHED to lower state IDLE
+#
+# A separate message from the one above, and the more interesting of the
+# two: SR Linux names both the state it left and the state it reached.
+# "ESTABLISHED -> IDLE" and "ACTIVE -> IDLE" are the same session_state
+# afterwards and very different events.
+
+messages:
+  - error: BGP_NEIGHBOR_STATE_CHANGED
+    tag: bgp
+    values:
+      network_instance: ([\w\-]+)
+      vr: ([\w\-]+)
+      vr_id: (\d+)
+      peer_group: ([\w\-]+)
+      peer: ([\d\.a-fA-F:]+)
+      previous_state: (\w+)
+      current_state: (\w+)
+    line: 'In network-instance {network_instance}, the BGP session with VR {vr} ({vr_id}): Group {peer_group}: Peer {peer} moved from higher state {previous_state} to lower state {current_state}'
+    model: openconfig-bgp
+    mapping:
+      variables:
+        bgp//neighbors//neighbor//{peer}//state//session_state: current_state
+      static: {}

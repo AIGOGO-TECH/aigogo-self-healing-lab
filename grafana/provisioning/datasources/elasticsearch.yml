@@ -1,0 +1,78 @@
+# Two views of the same Elasticsearch: the Salt event stream, and the
+# container telemetry. They differ only in index and time field, but
+# Grafana needs a datasource per index pattern.
+#
+# Note there is deliberately no esVersion here. Pinning it made Grafana
+# emit the pre-8.x date_histogram syntax, which Elasticsearch 9 rejects
+# with "unknown field [interval]" — every panel returned 400.
+apiVersion: 1
+
+datasources:
+  - name: Elasticsearch-napalm
+    uid: es-napalm
+    type: elasticsearch
+    access: proxy
+    url: ${ES_URL}
+    # napalm-2*, not napalm-*: the wildcard also matches the napalm-audit
+    # data stream, which has no data._stamp field. A sort or a date
+    # histogram on a field one matched index lacks fails the whole search,
+    # so adding the audit trail silently broke every query over the events.
+    database: "napalm-2*"
+    isDefault: true
+    # grafana_reader can read napalm-*, docker-stats and lab-logs, and can
+    # write nothing at all. Grafana drives config pushes to routers through
+    # its alert rule, so read-only is not a formality.
+    basicAuth: true
+    basicAuthUser: grafana_reader
+    secureJsonData:
+      basicAuthPassword: ${GRAFANA_ES_PASSWORD}
+    jsonData:
+      timeField: "data._stamp"
+      maxConcurrentShardRequests: 5
+
+  - name: Elasticsearch-docker-stats
+    uid: es-docker-stats
+    type: elasticsearch
+    access: proxy
+    url: ${ES_URL}
+    database: "docker-stats"
+    basicAuth: true
+    basicAuthUser: grafana_reader
+    secureJsonData:
+      basicAuthPassword: ${GRAFANA_ES_PASSWORD}
+    jsonData:
+      timeField: "stamp"
+      maxConcurrentShardRequests: 5
+
+  # The audit trail and the container logs are separate datasources rather
+  # than one wildcard, because they do not share a time field: the Salt
+  # event stream timestamps with data._stamp and both data streams use
+  # @timestamp. A single datasource would silently show an empty graph for
+  # whichever of them it was not configured for.
+  - name: Elasticsearch-audit
+    uid: es-audit
+    type: elasticsearch
+    access: proxy
+    url: ${ES_URL}
+    database: "napalm-audit"
+    basicAuth: true
+    basicAuthUser: grafana_reader
+    secureJsonData:
+      basicAuthPassword: ${GRAFANA_ES_PASSWORD}
+    jsonData:
+      timeField: "@timestamp"
+      maxConcurrentShardRequests: 5
+
+  - name: Elasticsearch-logs
+    uid: es-lab-logs
+    type: elasticsearch
+    access: proxy
+    url: ${ES_URL}
+    database: "lab-logs"
+    basicAuth: true
+    basicAuthUser: grafana_reader
+    secureJsonData:
+      basicAuthPassword: ${GRAFANA_ES_PASSWORD}
+    jsonData:
+      timeField: "@timestamp"
+      maxConcurrentShardRequests: 5

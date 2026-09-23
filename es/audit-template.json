@@ -1,0 +1,35 @@
+{
+  "index_patterns": ["napalm-audit"],
+  "data_stream": {},
+  "priority": 300,
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": "1",
+        "number_of_replicas": "0",
+        "lifecycle": { "name": "napalm-audit" }
+      }
+    },
+    "mappings": {
+      "dynamic": "strict",
+      "properties": {
+        "@timestamp":  { "type": "date" },
+        "trace_id":    { "type": "keyword" },
+        "actor":       { "type": "keyword" },
+        "actor_type":  { "type": "keyword" },
+        "action":      { "type": "keyword" },
+        "source":      { "type": "keyword" },
+        "device":      { "type": "keyword" },
+        "fault":       { "type": "keyword" },
+        "interface":   { "type": "keyword" },
+        "state":       { "type": "keyword" },
+        "outcome":     { "type": "keyword" },
+        "reason":      { "type": "text" },
+        "jid":         { "type": "keyword" },
+        "duration_ms": { "type": "long" },
+        "config_diff": { "type": "text" },
+        "detail":      { "type": "object", "enabled": false }
+      }
+    }
+  }
+}

@@ -1,0 +1,49 @@
+# Root notification policy. Everything goes to n8n.
+#
+# group_by device/fault/interface is what keeps one broken interface from
+# becoming one alert per evaluation: all events for the same triple collapse
+# into a single notification. group_wait 5s is short on purpose -- this is a
+# lab demo and the whole point is the wall-clock time from break to heal.
+apiVersion: 1
+
+policies:
+  - orgId: 1
+    receiver: n8n-fault-webhook
+    # The REAL label names. The Elasticsearch datasource names a
+    # terms-aggregation series after the field it grouped on, so a firing
+    # instance carries `data.device.keyword`, not `device`. This line said
+    # [device, fault, interface] -- three labels that did not exist -- and
+    # Grafana therefore put every firing instance into one group and sent
+    # one notification per repeat interval. With two faults open, one of
+    # them was never delivered at all:
+    #
+    #   07:45:06  srl2  interface_admin_down   detected
+    #   07:45:20  both instances Alerting
+    #   07:51:35  srl1  interface_link_down    decision.declined
+    #   ...srl2 never reached the model
+    #
+    # Two faults at once is the normal case here: one interface going down
+    # raises admin_down on one router and link_down on its neighbour.
+    group_by: ['data.device.keyword', 'data.fault.keyword', 'data.interface.keyword']
+    group_wait: 5s
+    group_interval: 30s
+    # 5m, not shorter: if a fault is still firing after five minutes the
+    # remediation did not work, and re-notifying faster would only spin the
+    # n8n circuit breaker.
+    repeat_interval: 5m
+    routes:
+      # A detector that cannot see is not a network fault, and must not be
+      # handed to the thing that reconfigures routers. This rule spent an
+      # entire outage reporting healthy while every query it made came back
+      # 401 Unauthorized; execErrState is now Error, and this route is where
+      # that lands.
+      - receiver: escalation-store
+        object_matchers:
+          - ["alertname", "=", "DatasourceError"]
+        group_wait: 0s
+        repeat_interval: 10m
+      - receiver: escalation-store
+        object_matchers:
+          - ["alertname", "=", "DatasourceNoData"]
+        group_wait: 0s
+        repeat_interval: 30m

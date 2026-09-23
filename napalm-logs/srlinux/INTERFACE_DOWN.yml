@@ -1,0 +1,21 @@
+# netinst|2502|2502|00048|W: The interface ethernet-1/1.0 in
+# network-instance default is now down for reason: the subinterface is
+# operationally down
+#
+# The reason is kept: "admin-down" and "operationally down behind an
+# enabled interface" are different faults with different answers, and this
+# is the only place the device says which.
+
+messages:
+  - error: INTERFACE_DOWN
+    tag: netinst
+    values:
+      interface: ([\w\-\/\.]+)
+      network_instance: ([\w\-]+)
+      reason: (.*)
+    line: 'The interface {interface} in network-instance {network_instance} is now down for reason: {reason}'
+    model: openconfig-interfaces
+    mapping:
+      variables: {}
+      static:
+        interfaces//interface//{interface}//state//oper_status: DOWN

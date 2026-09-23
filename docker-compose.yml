@@ -1,0 +1,661 @@
+# Salt + observability plane.
+#
+# Devices live in containerlab (clab/topo.yml) on the "clab-selfheal"
+# network; everything here joins that same network so salt-proxy can reach
+# them and so the observability stack can reach salt-master's returner
+# traffic.
+#
+# Conventions applied to every service below:
+#   * image tags are pinned -- :latest turned a working stack into a broken
+#     one twice while this was being built (see docs/lessons.md)
+#   * every stateful service has a named volume; nothing important lives in
+#     a container's writable layer
+#   * every service declares a healthcheck, and depends_on waits on health,
+#     not on "the container started"
+#   * logs rotate. json-file with no max-size will fill a disk, and the
+#     first symptom is Elasticsearch refusing writes
+#   * memory is capped, so one runaway service degrades instead of taking
+#     the host down with it
+#   * published ports bind to ${BIND_ADDR} (127.0.0.1 by default). None of
+#     this is safe on a LAN without TLS termination in front of it.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-restart: &restart
+  restart: unless-stopped
+
+# Bundled services carry a profile so an ISP can drop the ones it already
+# runs and point the rest at its own. COMPOSE_PROFILES in .env decides;
+# the default runs everything. Salt, n8n and the collectors have no profile
+# because they are the lab itself, not infrastructure you might already own.
+#
+#   COMPOSE_PROFILES=core                 your ES, Kibana, NetBox, Grafana
+#   COMPOSE_PROFILES=core,netbox          your observability stack only
+#   COMPOSE_PROFILES=core,elastic,netbox,grafana    everything bundled
+
+services:
+
+  # =========================================================================
+  # Elasticsearch: event store, audit trail, container logs, telemetry
+  # =========================================================================
+  elasticsearch:
+    <<: *restart
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.3
+    container_name: elasticsearch
+    profiles: [elastic]
+    logging: *logging
+    environment:
+      - discovery.type=single-node
+      # Security on. Transport/HTTP TLS is deliberately off *inside* this
+      # bridge network and nothing else: see docs/production.md for the
+      # exact change, and why it is the one simplification left standing.
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:?set it in .env}
+      - ES_JAVA_OPTS=-Xms640m -Xmx640m
+      - cluster.routing.allocation.disk.watermark.low=90%
+      - cluster.routing.allocation.disk.watermark.high=95%
+      - cluster.routing.allocation.disk.watermark.flood_stage=97%
+      # Snapshot repository. Without path.repo, Elasticsearch refuses to
+      # register a filesystem repository at all, and there is no way to back
+      # the audit trail up -- which for an append-only change record is not
+      # an optional feature. scripts/backup.sh drives it.
+      - path.repo=/snapshots
+    mem_limit: 1800m
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    networks: [clab]
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+      - es-snapshots:/snapshots
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -u elastic:$$ELASTIC_PASSWORD http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # Index templates, ILM policies, and one least-privilege user per
+  # component. Runs to completion; salt-master will not start until it has.
+  # The templates must exist before the first Salt event creates an index,
+  # or Elasticsearch infers a mapping from whatever the first document
+  # happened to contain -- which once killed every Salt event for two hours.
+  es-init:
+    image: python:3.12-slim
+    container_name: es-init
+    profiles: [core]
+    restart: "no"
+    logging: *logging
+    depends_on:
+      # required:false so this still runs when the bundled Elasticsearch is
+      # switched off and ES_URL points at the ISP's own cluster. The script
+      # waits for the cluster itself, so it does not need the dependency.
+      elasticsearch: { condition: service_healthy, required: false }
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:?}
+      - KIBANA_SYSTEM_PASSWORD=${KIBANA_SYSTEM_PASSWORD:?}
+      - SALT_ES_PASSWORD=${SALT_ES_PASSWORD:?}
+      - GRAFANA_ES_PASSWORD=${GRAFANA_ES_PASSWORD:?}
+      - N8N_ES_PASSWORD=${N8N_ES_PASSWORD:?}
+      - STATS_ES_PASSWORD=${STATS_ES_PASSWORD:?}
+      - LOGS_ES_PASSWORD=${LOGS_ES_PASSWORD:?}
+      - WATCHDOG_ES_PASSWORD=${WATCHDOG_ES_PASSWORD:?}
+    volumes:
+      - ./es:/es:ro
+      # Mounted so this container, which runs as root, can hand the
+      # snapshot directory to Elasticsearch's uid. A named volume is
+      # created root-owned, and Elasticsearch runs as 1000 -- so
+      # registering the repository failed with access_denied even though
+      # path.repo was set correctly and the volume was mounted.
+      - es-snapshots:/snapshots
+    networks: [clab]
+    command: ["python3", "/es/init.py"]
+
+  kibana:
+    <<: *restart
+    image: docker.elastic.co/kibana/kibana:9.5.3
+    container_name: kibana
+    profiles: [elastic]
+    logging: *logging
+    depends_on:
+      es-init: { condition: service_completed_successfully }
+    environment:
+      - ELASTICSEARCH_HOSTS=${ES_URL:-http://elasticsearch:9200}
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_SYSTEM_PASSWORD:?}
+      # Kibana refuses to start without a 32+ character key, and regenerates
+      # a random one each boot otherwise -- which invalidates saved objects.
+      - XPACK_SECURITY_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY:?}
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY:?}
+      - XPACK_REPORTING_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY:?}
+    mem_limit: 1200m
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:5601:5601"
+    networks: [clab]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status | grep -q '\"level\":\"available\"'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+
+  # Kibana's data views live in Kibana's own saved-object index, not in this
+  # repo -- the third thing a fresh clone silently did not get, after the
+  # Grafana datasource and the alert rule. Discover would open onto nothing
+  # and say nothing about why.
+  kibana-init:
+    image: python:3.12-slim
+    container_name: kibana-init
+    profiles: [core]
+    restart: "no"
+    logging: *logging
+    depends_on:
+      kibana: { condition: service_healthy, required: false }
+    environment:
+      - KIBANA_URL=${KIBANA_URL:-http://kibana:5601}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:?}
+    volumes:
+      - ./kibana:/kibana:ro
+    networks: [clab]
+    command: ["python3", "/kibana/init.py"]
+
+  # =========================================================================
+  # Salt: detection and action
+  # =========================================================================
+  salt-master:
+    <<: *restart
+    image: selfheal-salt:latest
+    build: ./salt
+    container_name: salt-master
+    profiles: [core]
+    hostname: salt-master
+    logging: *logging
+    depends_on:
+      es-init: { condition: service_completed_successfully }
+    environment:
+      - SALT_ES_USER=salt_writer
+      - SALT_ES_PASSWORD=${SALT_ES_PASSWORD:?}
+      - SALT_API_SECRET=${SALT_API_SECRET:?}
+      - NETBOX_API_TOKEN=${NETBOX_API_TOKEN:?}
+      - NETBOX_URL=${NETBOX_URL:-http://netbox:8080}
+      - ES_URL=${ES_URL:-http://elasticsearch:9200}
+      - AUDIT_ES_URL=${ES_URL:-http://elasticsearch:9200}
+    mem_limit: 900m
+    volumes:
+      # Config is rendered from these templates at start so that no secret
+      # is ever committed to git. See salt/entrypoint.py.
+      - ./salt/master:/etc/salt/templates/master:ro
+      - ./salt/master.d:/etc/salt/templates/master.d:ro
+      - ./salt/states:/srv/salt:ro
+      - ./salt/pillar:/srv/pillar:ro
+      - salt-keys:/etc/salt/pki
+      - salt-run:/var/run/salt
+      - salt-cache:/var/cache/salt
+    networks: [clab]
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:8001:8000"   # NetBox already owns host 8000
+    # salt-api alongside the master -- see salt/master.d/api.conf for its
+    # deliberately tiny eauth scope (state.apply on srl* and nothing else).
+    command: ["sh", "-c", "salt-api -l info & exec salt-master -l info"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /var/run/salt/master/master_event_pub.ipc && curl -sf http://localhost:8000/ >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+
+  salt-proxy-srl1:
+    <<: *restart
+    image: selfheal-salt:latest
+    container_name: salt-proxy-srl1
+    profiles: [core]
+    logging: *logging
+    depends_on:
+      salt-master: { condition: service_healthy }
+    environment: &proxy-env
+      - SRL_USERNAME=${SRL_USERNAME:-admin}
+      - SRL_PASSWORD=${SRL_PASSWORD:?}
+      - NETBOX_API_TOKEN=${NETBOX_API_TOKEN:?}
+      - NETBOX_URL=${NETBOX_URL:-http://netbox:8080}
+      - ES_URL=${ES_URL:-http://elasticsearch:9200}
+      - AUDIT_ES_URL=${ES_URL:-http://elasticsearch:9200}
+      - SALT_ES_USER=salt_writer
+      - SALT_ES_PASSWORD=${SALT_ES_PASSWORD:?}
+    mem_limit: 450m
+    volumes:
+      - ./salt/proxy-srl1:/etc/salt/templates/proxy:ro
+      # The minion's keypair. Without a volume it is regenerated whenever
+      # the container is recreated, and the master -- which *does* persist
+      # its accepted keys -- rejects the new one as an impostor for an id
+      # it already knows. The proxy then exits, and the device silently
+      # stops being managed. Recovery is `salt-key -d srl1` on the master.
+      - salt-pki-srl1:/etc/salt/pki
+    networks: [clab]
+    command: ["salt-proxy", "--proxyid=srl1", "-l", "info"]
+    healthcheck: &proxy-health
+      test: ["CMD-SHELL", "pgrep -f salt-proxy >/dev/null"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  salt-proxy-srl2:
+    <<: *restart
+    image: selfheal-salt:latest
+    container_name: salt-proxy-srl2
+    profiles: [core]
+    logging: *logging
+    depends_on:
+      salt-master: { condition: service_healthy }
+    environment: *proxy-env
+    mem_limit: 450m
+    volumes:
+      - ./salt/proxy-srl2:/etc/salt/templates/proxy:ro
+      # The minion's keypair. Without a volume it is regenerated whenever
+      # the container is recreated, and the master -- which *does* persist
+      # its accepted keys -- rejects the new one as an impostor for an id
+      # it already knows. The proxy then exits, and the device silently
+      # stops being managed. Recovery is `salt-key -d srl2` on the master.
+      - salt-pki-srl2:/etc/salt/pki
+    networks: [clab]
+    command: ["salt-proxy", "--proxyid=srl2", "-l", "info"]
+    healthcheck: *proxy-health
+
+  salt-proxy-srl3:
+    <<: *restart
+    image: selfheal-salt:latest
+    container_name: salt-proxy-srl3
+    profiles: [core]
+    logging: *logging
+    depends_on:
+      salt-master: { condition: service_healthy }
+    environment: *proxy-env
+    mem_limit: 450m
+    volumes:
+      - ./salt/proxy-srl3:/etc/salt/templates/proxy:ro
+      # The minion's keypair. Without a volume it is regenerated whenever
+      # the container is recreated, and the master -- which *does* persist
+      # its accepted keys -- rejects the new one as an impostor for an id
+      # it already knows. The proxy then exits, and the device silently
+      # stops being managed. Recovery is `salt-key -d srl3` on the master.
+      - salt-pki-srl3:/etc/salt/pki
+    networks: [clab]
+    command: ["salt-proxy", "--proxyid=srl3", "-l", "info"]
+    healthcheck: *proxy-health
+
+  # =========================================================================
+  # Source of truth
+  # =========================================================================
+  # No separate rq-worker/beat containers: this lab needs NetBox's API as a
+  # config source for Salt to render from, not its background job features.
+  netbox-postgres:
+    <<: *restart
+    image: postgres:16-alpine
+    container_name: netbox-postgres
+    profiles: [netbox]
+    logging: *logging
+    environment:
+      - POSTGRES_DB=netbox
+      - POSTGRES_USER=netbox
+      - POSTGRES_PASSWORD=${NETBOX_DB_PASSWORD:?}
+    mem_limit: 512m
+    networks: [clab]
+    volumes:
+      - netbox-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netbox -d netbox"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  netbox-redis:
+    <<: *restart
+    image: redis:7-alpine
+    container_name: netbox-redis
+    profiles: [netbox]
+    logging: *logging
+    command: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    mem_limit: 128m
+    networks: [clab]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  netbox:
+    <<: *restart
+    image: docker.io/netboxcommunity/netbox:v4.2-3.1.0
+    container_name: netbox
+    profiles: [netbox]
+    logging: *logging
+    depends_on:
+      netbox-postgres: { condition: service_healthy }
+      netbox-redis: { condition: service_healthy }
+    environment:
+      - DB_HOST=netbox-postgres
+      - DB_NAME=netbox
+      - DB_USER=netbox
+      - DB_PASSWORD=${NETBOX_DB_PASSWORD:?}
+      - REDIS_HOST=netbox-redis
+      - REDIS_CACHE_HOST=netbox-redis
+      - SECRET_KEY=${NETBOX_SECRET_KEY:?}
+      - ALLOWED_HOSTS=*
+      - SKIP_SUPERUSER=false
+      - SUPERUSER_NAME=${NETBOX_SUPERUSER_NAME:-admin}
+      - SUPERUSER_PASSWORD=${NETBOX_SUPERUSER_PASSWORD:?}
+      - SUPERUSER_API_TOKEN=${NETBOX_API_TOKEN:?}
+      # NetBox keeps its own object change log: who changed which field on
+      # which object, when, with a before/after diff. It is the source-of-
+      # truth half of the audit trail, so it is kept for a year rather than
+      # NetBox's 90-day default.
+      - CHANGELOG_RETENTION=365
+    mem_limit: 1500m
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:8000:8080"
+    networks: [clab]
+    volumes:
+      - netbox-media:/opt/netbox/netbox/media
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/login/ >/dev/null"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
+  # =========================================================================
+  # Decision layer
+  # =========================================================================
+  # ollama runs natively on the host (Metal/GPU acceleration, not in
+  # Docker); n8n reaches it via host.docker.internal. Docker Desktop
+  # resolves that name for free, plain Linux does not -- hence extra_hosts.
+  n8n:
+    <<: *restart
+    image: n8nio/n8n:2.38.7
+    container_name: n8n
+    profiles: [core]
+    logging: *logging
+    depends_on:
+      es-init: { condition: service_completed_successfully }
+    environment:
+      - N8N_SECURE_COOKIE=false
+      - GENERIC_TIMEZONE=Asia/Ulaanbaatar
+      - TZ=Asia/Ulaanbaatar
+      # Credentials n8n stores are encrypted with this key. If it changes,
+      # every saved credential becomes unreadable -- back it up with the
+      # volume, and never regenerate it casually.
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:?}
+      # --- audit: keep every execution, successes included ----------------
+      # n8n's defaults drop successful executions, which is exactly the
+      # wrong half to lose: a remediation that worked is the record you need
+      # when someone asks why a router changed at 04:04 last Tuesday.
+      - EXECUTIONS_DATA_SAVE_ON_SUCCESS=all
+      - EXECUTIONS_DATA_SAVE_ON_ERROR=all
+      - EXECUTIONS_DATA_SAVE_ON_PROGRESS=true
+      - EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS=true
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=8760          # hours = 365 days
+      - EXECUTIONS_DATA_PRUNE_MAX_COUNT=50000
+      - N8N_LOG_LEVEL=info
+      - N8N_LOG_OUTPUT=console
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+      # n8n 2.x blocks $env inside nodes by default, which is the right
+      # default for a shared automation server where anyone can author a
+      # workflow. It is opened here because the alternative is worse for
+      # this repo: n8n credential objects cannot be exported without either
+      # committing the decrypted secret or committing an encrypted blob
+      # that is useless to anyone else, so the workflow JSON would have to
+      # carry the salt-api secret in plain text.
+      #
+      # The trade-off is contained by what this container is given: the
+      # variables below and nothing else. A workflow here can read the
+      # salt-api secret -- which is already scoped to state.apply on srl*
+      # -- and cannot read the Elasticsearch superuser password, the
+      # NetBox token, or the device credentials, because they are not in
+      # its environment.
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # Endpoints and secrets the workflows read via $env, so that nothing
+      # sensitive is stored inside an exported workflow JSON.
+      - ES_URL=${ES_URL:-http://elasticsearch:9200}
+      - ES_AUTH_HEADER=${N8N_ES_AUTH_HEADER}
+      - SALT_API_URL=${SALT_API_URL:-http://salt-master:8000}
+      - SALT_API_USER=n8n
+      - SALT_API_SECRET=${SALT_API_SECRET:?}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
+    mem_limit: 900m
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:5678:5678"
+    networks: [clab]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    healthcheck:
+      # /healthz answers ok as soon as the HTTP listener is up, which n8n
+      # does BEFORE it touches the database. On a fresh volume the first
+      # two log lines are "n8n ready on ::, port 5678" and then
+      # "Migrations in progress" -- followed by five hundred lines of
+      # migration. So compose called n8n healthy while it had no schema,
+      # and bootstrap imported its workflows into that window. The import
+      # reported nothing, n8n came up with zero workflows, and the first
+      # fault of the demo was detected and then never acted on.
+      # /healthz/readiness answers for the database, not the listener.
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:5678/healthz/readiness | grep -q ok"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+
+  # =========================================================================
+  # Collectors: telemetry and logs, both straight from the Docker API
+  # =========================================================================
+  docker-stats:
+    <<: *restart
+    image: python:3.12-slim
+    container_name: docker-stats
+    profiles: [core]
+    logging: *logging
+    depends_on:
+      es-init: { condition: service_completed_successfully }
+    environment:
+      - ES_URL=${ES_URL:-http://elasticsearch:9200}
+      - ES_USER=stats_writer
+      - ES_PASSWORD=${STATS_ES_PASSWORD:?}
+    mem_limit: 256m
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./collector:/collector:ro
+    working_dir: /collector
+    command: ["python3", "/collector/stats.py"]
+    networks: [clab]
+    healthcheck:
+      # The heartbeat file, not the process: a thread wedged on a half-open
+      # docker socket leaves a healthy-looking PID behind. pgrep is also not
+      # present in python:3.12-slim, so the old check reported unhealthy for
+      # a collector that was working perfectly.
+      test: ["CMD-SHELL", "python3 -c \"import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime('/tmp/heartbeat') < 90 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # Every lab container's stdout, on the same time axis as the Salt events
+  # and the audit trail. Filebeat is the usual answer and does not work
+  # here: its container input reads /var/lib/docker/containers, which lives
+  # inside the LinuxKit VM on Docker Desktop and cannot be bind-mounted
+  # from macOS -- the same wall cAdvisor hit. The Docker API behaves
+  # identically on both platforms.
+  docker-logs:
+    <<: *restart
+    image: python:3.12-slim
+    container_name: docker-logs
+    profiles: [core]
+    logging: *logging
+    depends_on:
+      es-init: { condition: service_completed_successfully }
+    environment:
+      - ES_URL=${ES_URL:-http://elasticsearch:9200}
+      - ES_USER=log_writer
+      - ES_PASSWORD=${LOGS_ES_PASSWORD:?}
+    mem_limit: 384m
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./collector:/collector:ro
+    working_dir: /collector
+    command: ["python3", "/collector/logs.py"]
+    networks: [clab]
+    healthcheck:
+      # The heartbeat file, not the process: a thread wedged on a half-open
+      # docker socket leaves a healthy-looking PID behind. pgrep is also not
+      # present in python:3.12-slim, so the old check reported unhealthy for
+      # a collector that was working perfectly.
+      test: ["CMD-SHELL", "python3 -c \"import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime('/tmp/heartbeat') < 90 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # The routers' own view of events. Container stdout has been going to
+  # Elasticsearch for a while; the devices logged nowhere, which is the
+  # wrong half to lose -- when a remediation does not work, the useful
+  # evidence is what the device thought was happening at the time.
+  #
+  # Fixed address because the routers are configured to send here, and a
+  # syslog destination that moves is a syslog destination that stops
+  # working the next time the stack restarts.
+  device-syslog:
+    <<: *restart
+    image: python:3.12-slim
+    container_name: device-syslog
+    profiles: [core]
+    logging: *logging
+    depends_on:
+      es-init: { condition: service_completed_successfully }
+    environment:
+      - ES_URL=${ES_URL:-http://elasticsearch:9200}
+      - ES_USER=log_writer
+      - ES_PASSWORD=${LOGS_ES_PASSWORD:?}
+      - SYSLOG_PORT=5514
+    mem_limit: 256m
+    volumes:
+      - ./collector:/collector:ro
+    working_dir: /collector
+    command: ["python3", "/collector/syslog.py"]
+    networks:
+      clab:
+        ipv4_address: ${SYSLOG_ADDR:-172.30.30.30}
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime('/tmp/heartbeat') < 180 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # Notices when the monitoring itself has stopped working.
+  #
+  # Deliberately outside Salt and outside the event pipeline it watches. A
+  # beacon cannot report that its own minion is dead, and a Salt master
+  # cannot report that its own event bus has stopped reaching
+  # Elasticsearch. On 2026-09-15 a Docker restart stopped all three routers
+  # for an hour and forty-five minutes while every service reported healthy
+  # and the alert rule sat at state:inactive -- because the beacons emitted
+  # nothing, and nothing that counts events can tell silence from health.
+  watchdog:
+    <<: *restart
+    image: python:3.12-slim
+    container_name: watchdog
+    profiles: [core]
+    logging: *logging
+    depends_on:
+      es-init: { condition: service_completed_successfully }
+    environment:
+      - ES_URL=${ES_URL:-http://elasticsearch:9200}
+      - ES_USER=watchdog
+      - ES_PASSWORD=${WATCHDOG_ES_PASSWORD:?}
+      - WATCHDOG_DEVICES=${WATCHDOG_DEVICES:-srl1,srl2,srl3}
+      - WATCHDOG_SILENCE_SECONDS=${WATCHDOG_SILENCE_SECONDS:-180}
+      - WATCHDOG_STARTUP_GRACE=${WATCHDOG_STARTUP_GRACE:-300}
+    mem_limit: 256m
+    volumes:
+      - ./collector:/collector:ro
+    working_dir: /collector
+    command: ["python3", "/collector/watchdog.py"]
+    networks: [clab]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime('/tmp/heartbeat') < 180 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+  # =========================================================================
+  # Grafana: alerting, and the dashboards
+  # =========================================================================
+  # Everything Grafana knows is provisioned from files in ./grafana:
+  # datasources, dashboards, the alert rule, the contact point and the
+  # notification policy. The volume below holds only what provisioning
+  # cannot: alert state history, silences, annotations.
+  grafana:
+    <<: *restart
+    image: grafana/grafana:11.3.0
+    container_name: grafana
+    profiles: [grafana]
+    logging: *logging
+    depends_on:
+      es-init: { condition: service_completed_successfully }
+    environment:
+      # Anonymous Admin is gone. It was convenient and it meant anyone who
+      # could reach port 3000 could rewrite the alert rule that drives
+      # config pushes to routers.
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      # Read back by grafana/provisioning/datasources/elasticsearch.yml.
+      - GRAFANA_ES_PASSWORD=${GRAFANA_ES_PASSWORD:?}
+      # Expanded inside grafana/provisioning/**: Grafana substitutes
+      # ${VAR} from its own environment when it reads those files.
+      - ES_URL=${ES_URL:-http://elasticsearch:9200}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://n8n:5678/webhook/fault}
+      - GF_LOG_LEVEL=info
+    mem_limit: 512m
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:3000:3000"
+    networks: [clab]
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health | grep -q ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  es-snapshots:
+  salt-keys:
+  salt-pki-srl1:
+  salt-pki-srl2:
+  salt-pki-srl3:
+  salt-run:
+  salt-cache:
+  es-data:
+  grafana-data:
+  netbox-postgres-data:
+  netbox-media:
+  n8n-data:
+
+networks:
+  clab:
+    external: true
+    name: clab-selfheal

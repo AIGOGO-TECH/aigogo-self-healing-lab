@@ -1,0 +1,35 @@
+# Where a firing alert goes: straight into the n8n webhook that runs the
+# decision workflow. Nothing here emails a human -- a human only hears about
+# it if the model declines, and then n8n writes the ticket itself.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: n8n-fault-webhook
+    receivers:
+      - uid: n8n-fault-webhook
+        type: webhook
+        settings:
+          httpMethod: POST
+          url: ${N8N_WEBHOOK_URL}
+        # a "resolved" notification would re-trigger the whole remediation
+        # workflow for a fault that has already been healed
+        disableResolveMessage: true
+
+  # Where a *broken detector* goes. Grafana raises DatasourceError and
+  # DatasourceNoData as alerts in their own right; policies.yml routes them
+  # here instead of to the remediation webhook, because a rule that cannot
+  # read Elasticsearch has no idea what is wrong with the network and must
+  # never be able to start a config push. It writes straight to its own
+  # Elasticsearch index -- the only index Grafana is permitted to write to.
+  - orgId: 1
+    name: escalation-store
+    receivers:
+      - uid: escalation-store
+        type: webhook
+        settings:
+          httpMethod: POST
+          url: ${ES_URL}/napalm-escalations/_doc
+          username: grafana_reader
+          password: ${GRAFANA_ES_PASSWORD}
+        disableResolveMessage: false

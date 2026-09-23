@@ -1,0 +1,43 @@
+# napalm-logs profile: Nokia SR Linux
+#
+# napalm-logs ships profiles for eos, fortinet, huawei, ios, iosxr, junos,
+# netiron, nxos, opengear and sonic. There is none for SR Linux, which is
+# why this lab detects faults by polling with Salt beacons -- about seven
+# seconds -- rather than by consuming pushed events, which would be
+# sub-second.
+#
+# Every `line` and `values` in this directory was written against messages
+# actually captured from the lab's routers into Elasticsearch, not from
+# the documentation. The raw sample is quoted above each one.
+#
+# SR Linux emits RFC 5424. Its structured-data field is a bare "-", and the
+# message body then carries a second, SR Linux-specific header:
+#
+#   <134>1 2026-09-21T04:28:49.123456+00:00 srl1 netinst 2502 - -  netinst|2502|2502|00049|N: The interface ...
+#   ^pri ^ver ^timestamp                    ^host ^app    ^pid      ^app   ^pid ^tid ^seq  ^sev  ^text
+#
+# napalm-logs matches each message file on `tag`, so `tag` is bound to the
+# RFC 5424 APP-NAME -- netinst, bgp, isis, bfd, lldp -- and the per-message
+# files match the text after the inner header. That inner header is
+# consumed here rather than in every file.
+
+prefixes:
+  - time_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+    values:
+      version: (\d)
+      date: (\d{4}\-\d{2}\-\d{2})
+      time: (\d{2}:\d{2}:\d{2})
+      timeSecfrac: (\d+)
+      timeOffset: ((?:\+|\-)\d{2}:\d{2})
+      host: ([^ ]+)
+      tag: ([^ ]+)
+      processId: ([^ ]+)
+      messageId: ([^ ]+)
+      structuredData: ([^ ]+)
+      # the SR Linux-specific inner header, discarded
+      srlApp: (\w+)
+      srlPid: (\d+)
+      srlTid: (\d+)
+      srlSeq: (\d+)
+      severity_label: (\w)
+    line: '{version} {date}T{time}.{timeSecfrac}{timeOffset} {host} {tag} {processId} {messageId} {structuredData}  {srlApp}|{srlPid}|{srlTid}|{srlSeq}|{severity_label}: '

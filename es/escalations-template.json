@@ -1,0 +1,29 @@
+{
+  "index_patterns": ["napalm-escalations*"],
+  "priority": 200,
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": "1",
+        "number_of_replicas": "0",
+        "lifecycle": { "name": "napalm-audit" }
+      }
+    },
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "receiver":     { "type": "keyword" },
+        "status":       { "type": "keyword" },
+        "groupKey":     { "type": "keyword" },
+        "truncatedAlerts": { "type": "integer" },
+        "commonLabels": {
+          "properties": {
+            "alertname":     { "type": "keyword" },
+            "grafana_folder":{ "type": "keyword" },
+            "rulename":      { "type": "keyword" }
+          }
+        }
+      }
+    }
+  }
+}

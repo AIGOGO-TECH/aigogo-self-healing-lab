@@ -1,0 +1,502 @@
+{
+  "id": "a1b2c3d4-fault-remediation-0001",
+  "name": "Fault \u2192 LLM \u2192 Salt Remediation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fault",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "hook",
+      "name": "Alert webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "a1b2c3d4-fault-remediation-0001"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ES_URL }}/napalm-2*/_search",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"size\": 20,\n  \"sort\": [\n    {\n      \"data._stamp\": \"desc\"\n    }\n  ],\n  \"query\": {\n    \"bool\": {\n      \"must\": [\n        {\n          \"wildcard\": {\n            \"tag.keyword\": \"*/fault\"\n          }\n        },\n        {\n          \"range\": {\n            \"data._stamp\": {\n              \"gte\": \"now-2m\"\n            }\n          }\n        }\n      ]\n    }\n  }\n}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.ES_AUTH_HEADER }}"
+            }
+          ]
+        }
+      },
+      "id": "fetch_fault",
+      "name": "Fetch fault from ES",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Two ways in, on purpose:\n//  1. a fault POSTed directly in the body (manual demo, testing)\n//  2. a bare wake-up from Grafana, where the body carries no usable\n//     labels \u2014 then Elasticsearch tells us what broke.\n// Grafana's label templating rendered '[no value]', so anything that\n// looks like that is treated as absent.\n//\n// trace_id is the important field here. The beacon that first saw the\n// fault minted it and it is already on the event in Elasticsearch, so\n// the decision made below, the config push that follows, and the commit\n// message left on the router all end up under the same id. A fault\n// posted by hand has no id yet, so one is minted and marked as such.\nconst items = $input.all();\nconst es = items[items.length - 1].json;\nconst posted = $('Alert webhook').first().json.body || {};\n\nfunction clean(v) {\n  if (v === undefined || v === null) return '';\n  const s = String(v).trim();\n  return (s === '' || s === '[no value]') ? '' : s;\n}\n\nfunction mintTrace(device) {\n  const t = new Date().toISOString().replace(/[-:]/g, '').replace(/\\..+/, 'Z');\n  const r = Math.random().toString(16).slice(2, 8);\n  return `${device || 'manual'}-${t}-${r}`;\n}\n\n// 1a. Grafana's own labels, when it sends usable ones.\n//\n// This path did not exist, and its absence was the reason two faults at\n// once behaved badly. The rule's series are named after the FIELD the\n// Elasticsearch datasource grouped on -- data.device.keyword, not device\n// -- so the short names were always empty and every notification fell\n// through to path 2 below, which returns EVERY recent fault as a list.\n//\n// One notification then processed all of them, and two notifications for\n// two different faults each processed the same list. Observed: srl2 got\n// two decisions two seconds apart and srl3, whose own alert instance was\n// firing at the same moment, got none for five minutes.\n//\n// An alert is about one fault. Handle that one.\nconst galerts = (($('Alert webhook').first().json.body || {}).alerts) || [];\nconst glabels = (galerts[0] || {}).labels || {};\nconst gdev = clean(glabels['data.device.keyword'] || glabels.device);\nconst gflt = clean(glabels['data.fault.keyword'] || glabels.fault);\nif (gdev && gflt) {\n  const gif = clean(glabels['data.interface.keyword'] || glabels.interface);\n  // Grafana knows WHICH fault; Elasticsearch knows its trace id and\n  // detail. Match on the triple rather than taking the newest event.\n  const hits0 = (es.hits && es.hits.hits) || [];\n  let match = null;\n  for (const h of hits0) {\n    const d = h._source.data || {};\n    if (clean(d.device) === gdev && clean(d.fault) === gflt &&\n        clean(d.interface) === gif) { match = d; break; }\n  }\n  return [{ json: {\n    device: gdev,\n    fault: gflt,\n    interface: gif,\n    detail: clean(match && match.detail),\n    peer: clean(match && match.peer),\n    trace_id: clean(match && match.trace_id) || mintTrace(gdev),\n    traced: Boolean(match && clean(match.trace_id)),\n    origin: 'beacon',\n    source: 'grafana-labels',\n  }}];\n}\n\n// 1b. direct POST wins if it names a device and a fault\nif (clean(posted.device) && clean(posted.fault)) {\n  return [{ json: {\n    device: clean(posted.device),\n    fault: clean(posted.fault),\n    interface: clean(posted.interface),\n    detail: clean(posted.detail),\n    peer: clean(posted.peer),\n    trace_id: clean(posted.trace_id) || mintTrace(clean(posted.device)),\n    origin: 'posted',\n    source: 'posted',\n  }}];\n}\n\n// 2. otherwise take what Elasticsearch has seen recently\nconst hits = (es.hits && es.hits.hits) || [];\nconst seen = new Set();\nconst out = [];\nfor (const h of hits) {\n  const d = h._source.data || {};\n  if (!clean(d.device) || !clean(d.fault)) continue;\n  const key = d.device + '|' + d.fault + '|' + (d.interface || '');\n  if (seen.has(key)) continue;\n  seen.add(key);\n  out.push({ json: {\n    device: clean(d.device),\n    fault: clean(d.fault),\n    interface: clean(d.interface),\n    detail: clean(d.detail),\n    peer: clean(d.peer),\n    // The beacon's id. Falling back to a minted one would silently break\n    // correlation, so an event without one is marked rather than hidden.\n    trace_id: clean(d.trace_id) || mintTrace(clean(d.device)),\n    traced: Boolean(clean(d.trace_id)),\n    origin: 'beacon',\n    source: 'elasticsearch',\n  }});\n}\nif (out.length === 0) {\n  return [{ json: {\n    device: '', fault: 'no_fault_found', interface: '', trace_id: '',\n    detail: 'alert fired but no fault event was found in the last 2 minutes',\n    origin: 'none', source: 'none',\n  }}];\n}\nreturn out;\n"
+      },
+      "id": "normalize",
+      "name": "Normalize alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the LLM prompt here rather than inside an n8n expression:\n// n8n's {{ }} parser closes on the first '}}' it sees, so any nested\n// object literal inside an expression truncates it (learned the hard way\n// \u2014 see docs/lessons.md #12).\nconst j = $('Normalize alert').item.json;\nconst prompt = [\n  'You are a network automation dispatcher. Choose exactly ONE remediation',\n  'template for the fault below. Reply with ONLY a JSON object, no prose:',\n  '{\"state\": \"<template name>\", \"reason\": \"<one short sentence>\"}',\n  '',\n  'Allowed template names (choose one, never invent).',\n  'Each one is described by the FAULT it repairs, not by the technology it',\n  'touches. Matching on a shared word is how a real runbook gets applied to',\n  'the wrong fault:',\n  '- restore_interface : fault is that an interface was administratively shut.',\n  '                      Re-enables it. Does nothing for a link that is down',\n  '                      for any other reason.',\n  '- fix_p2p_mtu      : fault is that the two ends of one link disagree on MTU.',\n  '- restore_bgp_neighbor : fault is that a BGP session was administratively',\n  '                      shut. Un-shuts it. Does nothing for a session that is',\n  '                      down for any other reason.',\n  '- sync_from_netbox : fault is CONFIG DRIFT \u2014 the running config no longer',\n  '                      matches NetBox. Re-applies NetBox intent.',\n  '- sync_from_pillar : same, where the source of truth is pillar/YAML.',\n  '- golden_config    : fault is PROTOCOL DRIFT \u2014 IS-IS, BFD or BGP session',\n  '                      settings no longer match the fabric plan.',\n  '- bgp_policy       : fault is POLICY DRIFT \u2014 the routing policy on the box',\n  '                      no longer matches NetBox. Only applies when something',\n  '                      DRIFTED. A capacity or threshold problem is not drift.',\n  '- none             : NO template above actually addresses this fault',\n  '',\n  'If nothing in the list genuinely fixes this fault, you MUST answer',\n  '\"none\". Picking a template that does not address the fault is worse',\n  'than escalating to a human: these templates are idempotent, so a wrong',\n  'choice succeeds, changes nothing, and leaves the real fault unhandled',\n  'while looking like it was handled.',\n  '',\n  'In particular, answer \"none\" when the fault is about CAPACITY or a',\n  'THRESHOLD \u2014 a prefix limit being approached, a table filling, a counter',\n  'rising. No configuration push fixes those, and widening a limit because',\n  'the limit warned you is disabling the safety device because it went off.',\n  'The same applies to anything PHYSICAL: a link that is down while the',\n  'configuration is already correct.',\n  '',\n  'Fault type: ' + j.fault,\n  'Device: ' + j.device,\n  'Interface: ' + j.interface,\n  'Peer: ' + (j.peer || ''),\n  'Detail: ' + j.detail,\n].join('\\n');\n\nreturn [{ json: Object.assign({}, j, {\n  // The model name comes from the environment, so switching models is a\n// change to .env rather than to this workflow.\n  ollamaBody: JSON.stringify({ model: $env.OLLAMA_MODEL || 'llama3.1',\n                               stream: false, prompt: prompt })\n})}];"
+      },
+      "id": "build_prompt",
+      "name": "Build LLM prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OLLAMA_URL }}/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.ollamaBody }}",
+        "options": {}
+      },
+      "id": "ask_llm",
+      "name": "Ask local LLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// FAIL CLOSED. The LLM's answer is only ever a NAME, and only a name\n// from this list is allowed through. Anything else \u2014 a hallucinated\n// template, prose, malformed JSON \u2014 stops here and never reaches\n// salt-api, let alone a router.\n//\n// Worth being precise about what this does and does not buy. The\n// whitelist makes an *invented* runbook impossible. It does nothing\n// about a real runbook chosen for the wrong fault. What contains that is\n// on the other side: every template is two to four lines, idempotent,\n// and takes its parameters from pillar rather than from this payload, so\n// the worst a wrong-but-allowed choice can do is a no-op.\nconst ALLOWED = ['restore_interface', 'fix_p2p_mtu', 'sync_from_netbox',\n                 'sync_from_pillar', 'restore_bgp_neighbor',\n                 // The two config-management states. Both are idempotent\n                 // convergences to a declared source of truth rather than\n                 // edits, so the worst a wrong choice does is re-assert\n                 // what NetBox or the fabric plan already says.\n                 'golden_config', 'bgp_policy'];\n\nconst fault = $('Normalize alert').item.json;\nconst MAX_PER_HOUR = 3;\nconst MODEL = $env.OLLAMA_MODEL || 'llama3.1';\nconst ACTOR = 'n8n/' + MODEL;\n\n// .item pairs by index and silently fails here \u2014 the breaker node emits a\n// single response while this node runs per LLM item, so read its first\n// output explicitly.\nlet recent = 0, alreadyDecided = 0;\ntry {\n  const b = $('Circuit breaker: recent count').first().json;\n  recent = b.aggregations.changes.doc_count || 0;\n  alreadyDecided = (b.aggregations.settled.doc_count || 0)\n                 + (b.aggregations.deciding.doc_count || 0);\n} catch (e) { recent = -1; }\n\n// One audit record per decision, written before anything is applied, so a\n// decision that is about to fail is still on the record. Fields match the\n// strict mapping on the napalm-audit data stream; anything else goes in\n// detail, which is stored but not indexed.\nfunction audit(action, outcome, state, reason, extra) {\n  return JSON.stringify({\n    '@timestamp': new Date().toISOString(),\n    action: action,\n    outcome: outcome,\n    trace_id: fault.trace_id || '',\n    actor: ACTOR,\n    actor_type: 'model',\n    source: 'n8n',\n    device: fault.device || '',\n    fault: fault.fault || '',\n    interface: fault.interface || '',\n    state: state || '',\n    reason: (reason || '').slice(0, 1000),\n    detail: Object.assign({\n      execution_id: $execution.id,\n      workflow: $workflow.name,\n      model: MODEL,\n      recent_changes_1h: recent,\n      fault_origin: fault.origin,\n    }, extra || {}),\n  });\n}\n\n// Someone already decided this one. Stopping here is what keeps two\n// Grafana notifications for one outage from becoming two concurrent\n// state.apply runs against the same router.\nif (alreadyDecided > 0) {\n  const reason = 'trace ' + fault.trace_id +\n                 ' is already settled or being decided right now';\n  return [{ json: Object.assign({}, fault, {\n    accepted: false, chosen: null, reason: '', recent: recent,\n    raw: reason,\n    note: 'duplicate \u2014 this fault is already being handled',\n    auditBody: audit('decision.duplicate', 'skipped', null, reason),\n  })}];\n}\n\nif (recent >= MAX_PER_HOUR) {\n  const reason = 'circuit breaker: ' + recent + ' changes to ' + fault.device +\n                 ' in the last hour';\n  return [{ json: Object.assign({}, fault, {\n    accepted: false, chosen: null, reason: '', recent: recent,\n    raw: reason,\n    note: 'circuit breaker open \u2014 escalated to a human',\n    auditBody: audit('decision.blocked', 'blocked', null, reason),\n  })}];\n}\n\nconst raw = ($json.response || '').trim();\n\nlet chosen = null, reason = '';\ntry {\n  const m = raw.match(/\\{[\\s\\S]*\\}/);\n  if (m) {\n    const parsed = JSON.parse(m[0]);\n    chosen = parsed.state;\n    reason = parsed.reason || '';\n  }\n} catch (e) { /* fall through to rejection below */ }\n\n// 'none' is a first-class answer: the LLM declining to act is a success,\n// not a failure. It routes to the rejected index for a human.\nif (chosen === 'none' || !ALLOWED.includes(chosen)) {\n  const declined = chosen === 'none';\n  return [{ json: Object.assign({}, fault, {\n    accepted: false,\n    chosen: chosen,\n    reason: reason,\n    raw: raw.slice(0, 400),\n    note: declined ? 'LLM declined: no template addresses this fault'\n                   : 'rejected: not in whitelist',\n    auditBody: audit(declined ? 'decision.declined' : 'decision.rejected',\n                     declined ? 'declined' : 'rejected',\n                     chosen, reason, { llm_raw: raw.slice(0, 1000) }),\n  })}];\n}\n\n// The trace id and the actor travel with the call. Salt puts both into the\n// commit message on the device, so `info from state /system configuration checkpoint *`\n// on the router names the decision that changed it.\nconst saltBody = JSON.stringify({\n  client: 'local',\n  tgt: fault.device,\n  fun: 'state.apply',\n  arg: [chosen],\n  kwarg: { pillar: {\n    interface: fault.interface,\n    peer: fault.peer || '',\n    trace_id: fault.trace_id || '',\n    actor: ACTOR,\n    actor_type: 'model',\n  }},\n  username: $env.SALT_API_USER || 'n8n',\n  password: $env.SALT_API_SECRET,\n  eauth: 'sharedsecret',\n});\n\nreturn [{ json: Object.assign({}, fault, {\n  accepted: true, chosen: chosen, reason: reason, recent: recent,\n  actor: ACTOR, saltBody: saltBody,\n  auditBody: audit('decision.made', 'accepted', chosen, reason,\n                   { llm_raw: raw.slice(0, 1000) }),\n})}];\n"
+      },
+      "id": "validate",
+      "name": "Validate against whitelist",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "acc",
+              "leftValue": "={{ $json.accepted }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "gate",
+      "name": "Accepted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SALT_API_URL }}/run",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.saltBody }}",
+        "options": {}
+      },
+      "id": "call_salt",
+      "name": "salt-api: run remediation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1520,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const f = $('Validate against whitelist').item.json;\nconst salt = $json;\n\n// Did the state actually do anything? salt-api answers 200 even when the\n// state failed or was blocked by the change gate, so the outcome has to be\n// read out of the return rather than inferred from the HTTP status.\nlet applied = false, blocked = false, saltComment = '';\ntry {\n  const ret = salt.return[0][f.device];\n  const states = Object.values(ret);\n  applied = states.some(s => s.result === true && s.changes &&\n                             Object.keys(s.changes).length > 0);\n  blocked = states.some(s => s.result === false &&\n                             String(s.comment || '').startsWith('blocked:'));\n  saltComment = states.map(s => s.comment).filter(Boolean).join(' | ').slice(0, 1000);\n} catch (e) {\n  saltComment = 'could not parse the salt-api response';\n}\n\nconst doc = {\n  device: f.device,\n  fault: f.fault,\n  interface: f.interface,\n  detail: f.detail,\n  trace_id: f.trace_id,\n  chosen_state: f.chosen,\n  llm_reason: f.reason,\n  recent_remediations: f.recent,\n  applied: applied,\n  blocked: blocked,\n  salt_comment: saltComment,\n  salt_result: JSON.stringify(salt).slice(0, 4000),\n  stamp: new Date().toISOString(),\n};\n\n// The change itself is audited by Salt, inside the state, with the config\n// diff attached \u2014 see _states/audited.py. What n8n records here is the\n// other half: that it asked, and what came back. If Salt has a\n// change.applied for this trace and n8n has no change.requested, or the\n// reverse, something between the two is lying.\nconst auditBody = JSON.stringify({\n  '@timestamp': new Date().toISOString(),\n  action: 'change.requested',\n  outcome: blocked ? 'blocked' : (applied ? 'success' : 'no-change'),\n  trace_id: f.trace_id || '',\n  actor: f.actor || 'n8n',\n  actor_type: 'workflow',\n  source: 'n8n',\n  device: f.device || '',\n  fault: f.fault || '',\n  interface: f.interface || '',\n  state: f.chosen || '',\n  reason: saltComment,\n  detail: {\n    execution_id: $execution.id,\n    workflow: $workflow.name,\n    salt_result: JSON.stringify(salt).slice(0, 4000),\n  },\n});\n\nreturn [{ json: { esBody: JSON.stringify(doc), auditBody: auditBody } }];\n"
+      },
+      "id": "build_doc",
+      "name": "Build outcome doc",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ES_URL }}/napalm-remediations/_doc",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.esBody }}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.ES_AUTH_HEADER }}"
+            }
+          ]
+        }
+      },
+      "id": "write_es",
+      "name": "Record outcome in ES",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1960,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const f = $json;\nconst doc = {\n  trace_id: f.trace_id,\n  device: f.device,\n  fault: f.fault,\n  interface: f.interface,\n  rejected_choice: f.chosen,\n  raw: f.raw,\n  note: f.note,\n  recent_remediations: f.recent,\n  stamp: new Date().toISOString(),\n};\nreturn [{ json: { esBody: JSON.stringify(doc) } }];"
+      },
+      "id": "build_reject",
+      "name": "Build rejection doc",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ES_URL }}/napalm-rejected/_doc",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.esBody }}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.ES_AUTH_HEADER }}"
+            }
+          ]
+        }
+      },
+      "id": "write_reject",
+      "name": "Record rejection in ES",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1740,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One query, two questions, because both answers live in the same\n// append-only audit stream:\n//\n//   changes    \u2014 how many times has this DEVICE actually been changed in\n//                the last hour? This is the circuit breaker. It counts\n//                change.applied, which only Salt writes, and only after a\n//                diff really landed on a router. The previous version\n//                counted rows in napalm-remediations, an index this\n//                workflow writes itself, so it was measuring its own\n//                output rather than what reached a device.\n//\n//   this_trace \u2014 has a decision already been made for THIS fault? Grafana\n//                re-notifies on its repeat interval and Elasticsearch can\n//                return the same fault twice, so one outage produced two\n//                executions, two LLM calls and two concurrent state.apply\n//                runs against one device. Salt refuses the second, so the\n//                collision was harmless and invisible; with a trace id it\n//                is neither.\n//\n// The authoritative rate limit is still Salt's: audit.change_allowed()\n// runs inside the state, so it also covers the reactor's drift path, which\n// this workflow never sees. Checking here as well means not waking the\n// model for a device already known to be flapping.\nconst f = $json;\nconst q = {\n  size: 0,\n  track_total_hits: true,\n  query: { bool: { filter: [\n    { term: { device: f.device } },\n    { range: { '@timestamp': { gte: 'now-1h' } } },\n  ]}},\n  aggs: {\n    // Unattended changes only, matching audit.change_allowed(). A\n    // person provisioning a router is not the automation looping,\n    // and counting their changes here meant the model was refused\n    // for an hour after any planned work -- on exactly the device\n    // most likely to need it. Two implementations of one control\n    // had drifted apart; this is the second one.\n    changes: { filter: { bool: {\n      filter: [{ term: { action: 'change.applied' } }],\n      must_not: [{ term: { actor_type: 'human' } }],\n    } } },\n    // Two different questions about this trace, because \"a decision was\n    // made\" and \"the fault was dealt with\" are not the same thing.\n    //\n    // settled  \u2014 a change actually reached the device. Nothing more to do.\n    //\n    // deciding \u2014 a decision was made in the last two minutes. That is a\n    //            concurrency guard against two Grafana notifications for\n    //            one outage, not a permanent record.\n    //\n    // Counting any past decision.made as \"handled\" meant a remediation\n    // refused by the rate limit or the blast radius was never retried, even\n    // after the ceiling cleared. The change had not happened and the system\n    // considered the fault closed -- a stuck fault that nothing would ever\n    // pick up again.\n    settled: { filter: { bool: { filter: [\n      { term: { trace_id: f.trace_id || '__none__' } },\n      { terms: { action: ['change.applied', 'change.verified'] } },\n    ]}}},\n    deciding: { filter: { bool: { filter: [\n      { term: { trace_id: f.trace_id || '__none__' } },\n      { term: { action: 'decision.made' } },\n      { range: { '@timestamp': { gte: 'now-2m' } } },\n    ]}}},\n  },\n};\nreturn [{ json: Object.assign({}, f, { breakerQuery: JSON.stringify(q) }) }];\n"
+      },
+      "id": "breaker_query",
+      "name": "Build breaker query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ES_URL }}/napalm-audit/_search",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.breakerQuery }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.ES_AUTH_HEADER }}"
+            }
+          ]
+        }
+      },
+      "id": "breaker_count",
+      "name": "Circuit breaker: recent count",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ES_URL }}/napalm-audit/_doc?op_type=create",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.ES_AUTH_HEADER }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.auditBody }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "aa000000-0000-4000-8000-00000000d001",
+      "name": "Audit: LLM decision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ES_URL }}/napalm-audit/_doc?op_type=create",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.ES_AUTH_HEADER }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.auditBody }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "aa000000-0000-4000-8000-00000000d002",
+      "name": "Audit: change requested",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1880,
+        520
+      ]
+    }
+  ],
+  "connections": {
+    "Alert webhook": {
+      "main": [
+        [
+          {
+            "node": "Fetch fault from ES",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize alert": {
+      "main": [
+        [
+          {
+            "node": "Build breaker query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LLM prompt": {
+      "main": [
+        [
+          {
+            "node": "Ask local LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask local LLM": {
+      "main": [
+        [
+          {
+            "node": "Validate against whitelist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate against whitelist": {
+      "main": [
+        [
+          {
+            "node": "Accepted?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Audit: LLM decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accepted?": {
+      "main": [
+        [
+          {
+            "node": "salt-api: run remediation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build rejection doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "salt-api: run remediation": {
+      "main": [
+        [
+          {
+            "node": "Build outcome doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build outcome doc": {
+      "main": [
+        [
+          {
+            "node": "Record outcome in ES",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Audit: change requested",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build rejection doc": {
+      "main": [
+        [
+          {
+            "node": "Record rejection in ES",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch fault from ES": {
+      "main": [
+        [
+          {
+            "node": "Normalize alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build breaker query": {
+      "main": [
+        [
+          {
+            "node": "Circuit breaker: recent count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Circuit breaker: recent count": {
+      "main": [
+        [
+          {
+            "node": "Build LLM prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "active": true
+}

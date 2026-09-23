@@ -1,0 +1,23 @@
+{
+  "index_patterns": ["napalm-2*"],
+  "priority": 200,
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": "1",
+        "number_of_replicas": "0"
+      }
+    },
+    "mappings": {
+      "properties": {
+        "data": {
+          "properties": {
+            "fun_args": { "type": "object", "enabled": false },
+            "arg":      { "type": "object", "enabled": false },
+            "return":   { "type": "object", "enabled": false }
+          }
+        }
+      }
+    }
+  }
+}

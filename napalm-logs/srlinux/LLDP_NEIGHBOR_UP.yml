@@ -1,0 +1,20 @@
+# lldp|4985|4985|00050|I: LLDP remote peer added on interface
+# ethernet-1/1: System srl1 with chassis ID 1A:A2:00:FF:00:00, port
+# ethernet-1/1 with MAC 1A:A2:00:FF:00:00
+
+messages:
+  - error: LLDP_NEIGHBOR_UP
+    tag: lldp
+    values:
+      interface: ([\w\-\/\.]+)
+      remote_system_name: ([\w\-\.]+)
+      remote_chassis_id: ([\da-fA-F:]+)
+      remote_port: ([\w\-\/\.]+)
+      remote_port_mac: ([\da-fA-F:]+)
+    line: 'LLDP remote peer added on interface {interface}: System {remote_system_name} with chassis ID {remote_chassis_id}, port {remote_port} with MAC {remote_port_mac}'
+    model: openconfig-lldp
+    mapping:
+      variables:
+        lldp//interfaces//interface//{interface}//neighbors//neighbor//{remote_chassis_id}//state//system-name: remote_system_name
+        lldp//interfaces//interface//{interface}//neighbors//neighbor//{remote_chassis_id}//state//port-id: remote_port
+      static: {}

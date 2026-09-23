@@ -1,0 +1,69 @@
+# Full proxy config, including device identity and credentials, lives here
+# rather than in pillar. saltext.napalm's device-connect path
+# (get_device_opts) reads opts['proxy'] directly and, under Salt 3008 in
+# this container setup, that dict is only ever populated from the local
+# minion config — pillar's 'proxy' key does not reliably merge into opts
+# before the first connection attempt. Documented in docs/lessons.md.
+master: salt-master
+# false, and tested rather than assumed. The canonical O'Reilly text says
+# this is needed for SSH-based proxies and "can be re-enabled for devices
+# using HTTP-based APIs" -- SR Linux is JSON-RPC over HTTP, so that carve-out
+# looks like it applies here. It does not.
+#
+# With multiprocessing: true the driver's _candidate_name is still fixed at
+# connect time (napalm-<session>), so every forked child drives the SAME
+# named candidate on the router and discards each other's work. The failure
+# is identical, and a per-process lock cannot reach across processes to stop
+# it. Measured: see docs/lessons.md #58.
+#
+# Concurrency safety is a property of where the state lives, not of the
+# transport. This driver keeps it on the device.
+multiprocessing: false
+mine_enabled: true
+
+# Reconnect the device session when it drops. Without this the proxy stays
+# up, answers test.ping, and every beacon that reads the device fails with
+#     ConnectionException: Device connection is not open; call open() first
+# -- so detection stops while every health check still says the minion is
+# fine. Found with an interface shut for two minutes and nothing noticing.
+proxy_keep_alive: true
+proxy_keep_alive_interval: 1
+log_level: info
+proxy:
+  proxytype: napalm
+  driver: srlinux
+  host: 172.30.30.21
+  username: ${SRL_USERNAME}
+  password: ${SRL_PASSWORD}
+  optional_args:
+    insecure: true
+# Publish our own interface state to the Salt mine so peers can compare
+# their side of a P2P link against ours (see _beacons/p2p_mismatch.py).
+mine_functions:
+  net.interfaces: []
+mine_interval: 1
+
+beacons:
+  # Emits every 60s whether or not anything is wrong, so that silence
+  # means something. See _beacons/heartbeat.py.
+  heartbeat:
+    - interval: 60
+  config_drift:
+    - interval: 20
+  # The protocol layer and the BGP policy drift too, and
+  # more dangerously: nobody looks at them between incidents.
+  config_drift_golden:
+    - interval: 30
+  config_drift_policy:
+    - interval: 30
+  iface_down:
+    - interval: 15
+  p2p_mismatch:
+    - interval: 20
+  bgp_down:
+    - interval: 20
+  # Warns before the limit tears the session down. No
+  # runbook: raising a limit under pressure disables the
+  # safety device because the safety device went off.
+  prefix_limit:
+    - interval: 30

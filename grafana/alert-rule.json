@@ -1,0 +1,116 @@
+{
+  "title": "Network fault detected by Salt beacon",
+  "ruleGroup": "selfheal",
+  "folderUID": "selfheal",
+  "noDataState": "OK",
+  "execErrState": "OK",
+  "for": "10s",
+  "orgID": 1,
+  "condition": "C",
+  "annotations": {
+    "summary": "A Salt beacon reported a network fault",
+    "device": "{{ $labels.device }}",
+    "fault": "{{ $labels.fault }}",
+    "detail": "{{ $labels.device }} {{ $labels.fault }} {{ $labels.interface }}"
+  },
+  "labels": {},
+  "data": [
+    {
+      "refId": "A",
+      "relativeTimeRange": {
+        "from": 120,
+        "to": 0
+      },
+      "datasourceUid": "dfy77rof8wq2oa",
+      "model": {
+        "refId": "A",
+        "query": "tag:*fault*",
+        "alias": "",
+        "metrics": [
+          {
+            "id": "1",
+            "type": "count"
+          }
+        ],
+        "bucketAggs": [
+          {
+            "id": "3",
+            "type": "terms",
+            "field": "data.device.keyword",
+            "settings": {
+              "size": "10",
+              "order": "desc",
+              "orderBy": "_term",
+              "min_doc_count": "1"
+            }
+          },
+          {
+            "id": "4",
+            "type": "terms",
+            "field": "data.fault.keyword",
+            "settings": {
+              "size": "10",
+              "order": "desc",
+              "orderBy": "_term",
+              "min_doc_count": "1"
+            }
+          },
+          {
+            "id": "5",
+            "type": "terms",
+            "field": "data.interface.keyword",
+            "settings": {
+              "size": "10",
+              "order": "desc",
+              "orderBy": "_term",
+              "min_doc_count": "1"
+            }
+          },
+          {
+            "id": "2",
+            "type": "date_histogram",
+            "field": "data._stamp",
+            "settings": {
+              "interval": "1m",
+              "min_doc_count": "1",
+              "trimEdges": "0"
+            }
+          }
+        ],
+        "timeField": "data._stamp"
+      }
+    },
+    {
+      "refId": "B",
+      "datasourceUid": "__expr__",
+      "model": {
+        "refId": "B",
+        "type": "reduce",
+        "expression": "A",
+        "reducer": "max",
+        "settings": {
+          "mode": "dropNN"
+        }
+      }
+    },
+    {
+      "refId": "C",
+      "datasourceUid": "__expr__",
+      "model": {
+        "refId": "C",
+        "type": "threshold",
+        "expression": "B",
+        "conditions": [
+          {
+            "evaluator": {
+              "type": "gt",
+              "params": [
+                0
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

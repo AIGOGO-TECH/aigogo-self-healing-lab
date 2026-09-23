@@ -1,0 +1,73 @@
+# srl3 demonstrates a SECOND source of truth: pillar/YAML instead of
+# NetBox's HTTP API (see pillar/srl3.sls + states/sync_from_pillar.sls).
+# Same reactor, same beacon pattern, different backend — the point Salt
+# makes easily that Ansible's per-source inventory scripts don't for
+# config data, not just host lists.
+master: salt-master
+# See the note in salt/proxy-srl1: tested, not assumed. The book's
+# "HTTP APIs can re-enable this" carve-out does not hold for a driver that
+# keeps a named candidate on the device. docs/lessons.md #58.
+multiprocessing: false
+mine_enabled: true
+
+# Reconnect the device session when it drops. Without this the proxy stays
+# up, answers test.ping, and every beacon that reads the device fails with
+#     ConnectionException: Device connection is not open; call open() first
+# -- so detection stops while every health check still says the minion is
+# fine. Found with an interface shut for two minutes and nothing noticing.
+proxy_keep_alive: true
+proxy_keep_alive_interval: 1
+log_level: info
+proxy:
+  proxytype: napalm
+  driver: srlinux
+  host: 172.30.30.23
+  username: ${SRL_USERNAME}
+  password: ${SRL_PASSWORD}
+  optional_args:
+    insecure: true
+# Publish our own interface state to the Salt mine so peers can compare
+# their side of a P2P link against ours (see _beacons/p2p_mismatch.py).
+mine_functions:
+  net.interfaces: []
+mine_interval: 1
+
+beacons:
+  # Emits every 60s whether or not anything is wrong, so that silence
+  # means something. See _beacons/heartbeat.py.
+  heartbeat:
+    - interval: 60
+  # NetBox, like every other device. srl3 used to be driven from
+  # pillar/YAML to demonstrate that the reactor does not care where truth
+  # comes from -- which was a fair demo on a three-node lab and is
+  # indefensible now that srl3 is the border router. Running two sources of
+  # truth on one fabric is the problem NetBox exists to solve.
+  #
+  # sync_from_pillar and config_drift_pillar are still in the repo and still
+  # work; they are simply not enabled anywhere by default. Enable
+  # config_drift_pillar here instead of config_drift to see the other path.
+  config_drift:
+    - interval: 20
+  # The protocol layer and the BGP policy drift too, and more dangerously:
+  # nobody looks at them between incidents.
+  config_drift_golden:
+    - interval: 30
+  config_drift_policy:
+    - interval: 30
+  iface_down:
+    - interval: 15
+  p2p_mismatch:
+    - interval: 20
+  bgp_down:
+    - interval: 20
+  # Warns before the limit tears the session down. No
+  # runbook: raising a limit under pressure disables the
+  # safety device because the safety device went off.
+  prefix_limit:
+    - interval: 30
+  # The one detector here that does not compare configuration to intent.
+  # It reads what the router is actually announcing to transit, because a
+  # route leak is a correct-looking config that behaves wrongly, and every
+  # config_drift_* beacon above would pass while it happened.
+  route_leak:
+    - interval: 30

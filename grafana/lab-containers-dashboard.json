@@ -1,0 +1,278 @@
+{
+  "dashboard": {
+    "title": "Lab \u2014 Docker services",
+    "uid": "lab-containers",
+    "tags": [
+      "selfheal",
+      "lab"
+    ],
+    "time": {
+      "from": "now-30m",
+      "to": "now"
+    },
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 10,
+        "title": "Every service in the demo, on one laptop",
+        "type": "text",
+        "gridPos": {
+          "h": 3,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "options": {
+          "mode": "markdown",
+          "content": "Three SR Linux routers, a Salt master with three proxy-minions and salt-api, Elasticsearch, Kibana, Grafana, NetBox with Postgres and Redis, n8n \u2014 plus this exporter. Sampled straight from the Docker API every 15s, indexed into Elasticsearch, drawn here."
+        }
+      },
+      {
+        "id": 1,
+        "title": "Memory per container",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 3
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "afy80sh5ygnb4d"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "decmbytes",
+            "custom": {
+              "fillOpacity": 8
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "right",
+            "calcs": [
+              "lastNotNull",
+              "max"
+            ]
+          }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "query": "*",
+            "metrics": [
+              {
+                "id": "1",
+                "type": "avg",
+                "field": "mem_mb"
+              }
+            ],
+            "bucketAggs": [
+              {
+                "id": "3",
+                "type": "terms",
+                "field": "container.keyword",
+                "settings": {
+                  "size": "25",
+                  "order": "desc",
+                  "orderBy": "_term",
+                  "min_doc_count": "1"
+                }
+              },
+              {
+                "id": "2",
+                "type": "date_histogram",
+                "field": "stamp",
+                "settings": {
+                  "interval": "auto",
+                  "min_doc_count": "1"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "CPU per container",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 3
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "afy80sh5ygnb4d"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "custom": {
+              "fillOpacity": 8
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "right",
+            "calcs": [
+              "lastNotNull",
+              "max"
+            ]
+          }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "query": "*",
+            "metrics": [
+              {
+                "id": "1",
+                "type": "avg",
+                "field": "cpu_percent"
+              }
+            ],
+            "bucketAggs": [
+              {
+                "id": "3",
+                "type": "terms",
+                "field": "container.keyword",
+                "settings": {
+                  "size": "25",
+                  "order": "desc",
+                  "orderBy": "_term",
+                  "min_doc_count": "1"
+                }
+              },
+              {
+                "id": "2",
+                "type": "date_histogram",
+                "field": "stamp",
+                "settings": {
+                  "interval": "auto",
+                  "min_doc_count": "1"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Total lab memory",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 7,
+          "w": 12,
+          "x": 0,
+          "y": 12
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "afy80sh5ygnb4d"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "decmbytes"
+          },
+          "overrides": []
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "query": "*",
+            "metrics": [
+              {
+                "id": "1",
+                "type": "sum",
+                "field": "mem_mb"
+              }
+            ],
+            "bucketAggs": [
+              {
+                "id": "2",
+                "type": "date_histogram",
+                "field": "stamp",
+                "settings": {
+                  "interval": "auto",
+                  "min_doc_count": "1"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Network out per container",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 7,
+          "w": 12,
+          "x": 12,
+          "y": 12
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "afy80sh5ygnb4d"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes"
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "query": "*",
+            "metrics": [
+              {
+                "id": "1",
+                "type": "max",
+                "field": "net_tx_bytes"
+              }
+            ],
+            "bucketAggs": [
+              {
+                "id": "3",
+                "type": "terms",
+                "field": "container.keyword",
+                "settings": {
+                  "size": "25",
+                  "order": "desc",
+                  "orderBy": "_term",
+                  "min_doc_count": "1"
+                }
+              },
+              {
+                "id": "2",
+                "type": "date_histogram",
+                "field": "stamp",
+                "settings": {
+                  "interval": "auto",
+                  "min_doc_count": "1"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "overwrite": true
+}

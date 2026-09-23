@@ -1,0 +1,112 @@
+# Self-healing network lab — MNNOG demo
+# Nokia SR Linux (native arm64, free, no registration). Production at the
+# ISP was Cisco IOS on an MPLS core; this lab runs IS-IS instead — the
+# public SR Linux container is a data-centre NOS with no MPLS/LDP in the
+# CLI tree at all (verified: no `system mpls`, no LDP under protocols, no
+# segment-routing under isis). IS-IS is the right substitute because the
+# fault class the demo cares about — an MTU mismatch that breaks adjacency
+# while each side's own config still looks valid — is IS-IS's own
+# hello-padding behaviour, not something MPLS adds.
+name: selfheal
+
+# AIGOGO's stacks already occupy 172.17-172.22 on this host, so the lab
+# management net is pinned well clear of them. Node mgmt IPs are pinned
+# too: containerlab reassigns them on every redeploy otherwise, and each
+# reshuffle silently breaks every salt-proxy's host: line.
+mgmt:
+  network: clab-selfheal
+  ipv4-subnet: ${MGMT_PREFIX:=172.30.30}.0/24
+
+topology:
+  kinds:
+    nokia_srlinux:
+      # PINNED: net_inst_mgr crashes on arm64 in v26.7.2 (veth 'gway-1' already
+      # exists in srbase-mgmt ns). 24.10.1 is the last known-good arm64 build.
+      #
+      # containerlab leaves nodes with no restart policy. A Docker Desktop
+      # restart therefore stopped all three routers and left them stopped,
+      # while every container in docker-compose.yml -- which does set one --
+      # came back healthy. The management plane was fine and the network was
+      # gone, which is the worst combination to be in.
+      restart-policy: unless-stopped
+      image: ${SRL_IMAGE:=ghcr.io/nokia/srlinux:24.10.1}
+      type: ixr-d3l
+      # Capped, because left uncapped each node grows to ~1.9GB and four of
+      # them plus the observability stack does not fit in the 11.7GB this
+      # laptop gives Docker -- measured, after the whole stack was
+      # OOM-killed mid-session.
+      #
+      # 2048MB. Both lower values were tried and both fail the same way,
+      # just at different speeds: the node boots, containerlab reports it
+      # running, the container reports healthy, and sr_app_mgr quietly loses
+      # the datapath --
+      #
+      #     oom_kill 4, memory.max hit 56479 times
+      #     sr_app_mgr: AppMgr: xdp_lc_1 has failed
+      #     mgmt0 is down, reason port-not-present
+      #
+      # -- leaving a router that is up, answers nothing, and reports no
+      # error anywhere the automation can see it. Starving a device is
+      # worse than not running it.
+      memory: 2048MB
+
+  nodes:
+    # Memory is set per node, not per kind, because the nodes do not do
+    # the same amount of work. Measured on this laptop with every node at
+    # a flat 2048MB: srl1 and srl3 were OOM-killed (oom_kill 3 and 2) and
+    # lost mgmt0 with 'port-not-present' while still reporting healthy --
+    # srl2 survived but peaked at the limit. The budget below comes from
+    # those peaks, and it costs nothing overall because srl4 gave back
+    # 1.8GB by no longer being SR Linux at all.
+    srl1:
+      kind: nokia_srlinux
+      mgmt-ipv4: ${MGMT_PREFIX:=172.30.30}.21
+      startup-config: configs/srl1.cfg
+      memory: ${SRL_MEMORY:=2560MB}
+    srl2:
+      kind: nokia_srlinux
+      mgmt-ipv4: ${MGMT_PREFIX:=172.30.30}.22
+      startup-config: configs/srl2.cfg
+      memory: ${SRL_MEMORY:=2560MB}
+    # The busiest node: three links, the eBGP edge, an iBGP client and
+    # every policy beacon.
+    srl3:
+      kind: nokia_srlinux
+      mgmt-ipv4: ${MGMT_PREFIX:=172.30.30}.23
+      startup-config: configs/srl3.cfg
+      memory: ${SRL_BORDER_MEMORY:=2816MB}
+    # A separate administrative domain: AS 64500, the upstream transit
+    # provider. It is in this topology so that the border router has a real
+    # eBGP session with real policy on it, and so the lab has at least one
+    # neighbour whose configuration we do not control -- which is the normal
+    # condition of an ISP and the source of most of its interesting faults.
+    #
+    # It runs FRR rather than SR Linux, for two reasons. The measured one:
+    # an idle SR Linux srl4 peaked at 1.84GB doing nothing but holding one
+    # eBGP session, and that 1.8GB is the difference between this lab
+    # fitting on a laptop and being OOM-killed on one. The better one: a
+    # transit provider IS a different company running different software
+    # that you cannot log into. A fourth identical SR Linux quietly implied
+    # otherwise.
+    srl4:
+      kind: linux
+      image: ${FRR_IMAGE:=quay.io/frrouting/frr:10.2.1}
+      mgmt-ipv4: ${MGMT_PREFIX:=172.30.30}.24
+      memory: 256MB
+      binds:
+        - configs/srl4-frr.conf:/etc/frr/frr.conf:ro
+        - configs/srl4-vtysh.conf:/etc/frr/vtysh.conf:ro
+        - configs/srl4-daemons:/etc/frr/daemons:ro
+
+  links:
+    # A triangle of core links plus one uplink. The triangle gives IS-IS a
+    # second path, so a single link failure is a reconvergence rather than
+    # an outage, and a fault can live BETWEEN two devices rather than on
+    # one of them.
+    - endpoints: ["srl1:e1-1", "srl2:e1-1"]
+    - endpoints: ["srl2:e1-2", "srl3:e1-1"]
+    # The third side. A line partitions the network on any single failure,
+    # which made self-healing hollow -- there was nothing to reroute to.
+    - endpoints: ["srl1:e1-2", "srl3:e1-2"]
+    # Uplink to transit. Not part of the IGP: this is an eBGP boundary.
+    - endpoints: ["srl3:e1-3", "srl4:eth1"]

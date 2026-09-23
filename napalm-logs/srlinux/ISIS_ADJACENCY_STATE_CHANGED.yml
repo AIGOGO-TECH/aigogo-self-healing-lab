@@ -1,0 +1,22 @@
+# isis|8624|8662|00045|W: In network-instance default, the level-2 IS-IS
+# adjacency with system 0000.0000.0002, using interface ethernet-1/1.0,
+# moved to state UP.
+#
+# Note the trailing full stop. SR Linux puts one here and not on the BGP
+# messages, and napalm-logs matches the whole line.
+
+messages:
+  - error: ISIS_ADJACENCY_STATE_CHANGED
+    tag: isis
+    values:
+      network_instance: ([\w\-]+)
+      level: (\d)
+      system_id: ([\da-fA-F\.]+)
+      interface: ([\w\-\/\.]+)
+      state: (\w+)
+    line: 'In network-instance {network_instance}, the level-{level} IS-IS adjacency with system {system_id}, using interface {interface}, moved to state {state}.'
+    model: openconfig-network-instance
+    mapping:
+      variables:
+        network-instances//network-instance//{network_instance}//protocols//protocol//ISIS//isis//interfaces//interface//{interface}//levels//level//{level}//adjacencies//adjacency//{system_id}//state//adjacency-state: state
+      static: {}

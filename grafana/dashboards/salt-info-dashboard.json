@@ -1,0 +1,59 @@
+{
+  "panels": [
+    {
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-napalm"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "bucketAggs": [
+            {
+              "field": "data._stamp",
+              "id": "2",
+              "settings": {
+                "interval": "auto"
+              },
+              "type": "date_histogram"
+            },
+            {
+              "field": "data.fun.keyword",
+              "id": "3",
+              "settings": {
+                "order": "desc",
+                "orderBy": "_count",
+                "size": "10"
+              },
+              "type": "terms"
+            }
+          ],
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "query": "*",
+          "refId": "A"
+        }
+      ],
+      "title": "Salt Changes",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "title": "Salt Info",
+  "uid": "salt-info",
+  "version": 1
+}

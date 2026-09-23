@@ -1,0 +1,59 @@
+# Full proxy config, including device identity and credentials, lives here
+# rather than in pillar. saltext.napalm's device-connect path
+# (get_device_opts) reads opts['proxy'] directly and, under Salt 3008 in
+# this container setup, that dict is only ever populated from the local
+# minion config — pillar's 'proxy' key does not reliably merge into opts
+# before the first connection attempt. Documented in docs/lessons.md.
+master: salt-master
+# See the note in salt/proxy-srl1: tested, not assumed. The book's
+# "HTTP APIs can re-enable this" carve-out does not hold for a driver that
+# keeps a named candidate on the device. docs/lessons.md #58.
+multiprocessing: false
+mine_enabled: true
+
+# Reconnect the device session when it drops. Without this the proxy stays
+# up, answers test.ping, and every beacon that reads the device fails with
+#     ConnectionException: Device connection is not open; call open() first
+# -- so detection stops while every health check still says the minion is
+# fine. Found with an interface shut for two minutes and nothing noticing.
+proxy_keep_alive: true
+proxy_keep_alive_interval: 1
+log_level: info
+proxy:
+  proxytype: napalm
+  driver: srlinux
+  host: 172.30.30.22
+  username: ${SRL_USERNAME}
+  password: ${SRL_PASSWORD}
+  optional_args:
+    insecure: true
+# Publish our own interface state to the Salt mine so peers can compare
+# their side of a P2P link against ours (see _beacons/p2p_mismatch.py).
+mine_functions:
+  net.interfaces: []
+mine_interval: 1
+
+beacons:
+  # Emits every 60s whether or not anything is wrong, so that silence
+  # means something. See _beacons/heartbeat.py.
+  heartbeat:
+    - interval: 60
+  config_drift:
+    - interval: 20
+  # The protocol layer and the BGP policy drift too, and
+  # more dangerously: nobody looks at them between incidents.
+  config_drift_golden:
+    - interval: 30
+  config_drift_policy:
+    - interval: 30
+  iface_down:
+    - interval: 15
+  p2p_mismatch:
+    - interval: 20
+  bgp_down:
+    - interval: 20
+  # Warns before the limit tears the session down. No
+  # runbook: raising a limit under pressure disables the
+  # safety device because the safety device went off.
+  prefix_limit:
+    - interval: 30

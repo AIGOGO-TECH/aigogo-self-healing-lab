@@ -1,0 +1,20 @@
+# bgp|9601|9669|00051|N: In network-instance default, the BGP session with
+# VR default (1): Group ibgp: Peer 10.255.0.2 moved into the ESTABLISHED
+# state
+
+messages:
+  - error: BGP_NEIGHBOR_STATE_CHANGED
+    tag: bgp
+    values:
+      network_instance: ([\w\-]+)
+      vr: ([\w\-]+)
+      vr_id: (\d+)
+      peer_group: ([\w\-]+)
+      peer: ([\d\.a-fA-F:]+)
+      current_state: (\w+)
+    line: 'In network-instance {network_instance}, the BGP session with VR {vr} ({vr_id}): Group {peer_group}: Peer {peer} moved into the {current_state} state'
+    model: openconfig-bgp
+    mapping:
+      variables:
+        bgp//neighbors//neighbor//{peer}//state//session_state: current_state
+      static: {}

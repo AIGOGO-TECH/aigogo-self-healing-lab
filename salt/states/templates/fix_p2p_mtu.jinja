@@ -1,0 +1,3 @@
+{#- Remediation template #2: set a P2P interface back to the MTU both
+    ends agreed on, as declared in pillar's p2p_links. -#}
+set / interface {{ interface }} mtu {{ mtu }}

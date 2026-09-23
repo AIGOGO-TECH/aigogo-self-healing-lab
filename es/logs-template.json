@@ -1,0 +1,40 @@
+{
+  "index_patterns": ["lab-logs"],
+  "data_stream": {},
+  "priority": 300,
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": "1",
+        "number_of_replicas": "0",
+        "lifecycle": { "name": "lab-logs" },
+        "mapping": { "total_fields": { "limit": 2000 } }
+      }
+    },
+    "mappings": {
+      "dynamic_templates": [
+        {
+          "message_is_text": {
+            "match": "message",
+            "mapping": { "type": "text" }
+          }
+        },
+        {
+          "everything_else_is_keyword": {
+            "match_mapping_type": "string",
+            "mapping": { "type": "keyword", "ignore_above": 1024 }
+          }
+        }
+      ],
+      "properties": {
+        "@timestamp":     { "type": "date" },
+        "message":        { "type": "text" },
+        "container.name": { "type": "keyword" },
+        "container.id":   { "type": "keyword" },
+        "container.image.name": { "type": "keyword" },
+        "log.level":      { "type": "keyword" },
+        "trace_id":       { "type": "keyword" }
+      }
+    }
+  }
+}

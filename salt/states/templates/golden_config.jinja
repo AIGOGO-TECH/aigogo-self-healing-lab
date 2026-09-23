@@ -1,0 +1,114 @@
+{#- The protocol layer, rendered from salt/pillar/fabric.sls.
+
+    This is the config a real ISP would push with ZTP rather than bake into
+    an image: IS-IS, BFD and BGP, derived from the same address plan that
+    produced the bootstrap. Because it goes through audited.config like
+    every other change, it is diffed against the device on every run,
+    recorded with a trace id, and rolled back by the device itself if the
+    network does not come back.
+
+    Idempotent by construction: these are `set` statements, so a device
+    already in this state produces an empty diff and no audit record.
+-#}
+{# ---- system hardening ----
+   Kept in the golden config rather than the bootstrap so that it is
+   diffed, audited and restored like everything else. Security and
+   observability settings are exactly the ones that get switched off during
+   an incident and never switched back. #}
+set / system lldp admin-state enable
+set / system lldp hello-timer 30
+{%- for iface in dev.links %}
+set / system lldp interface {{ iface }} admin-state enable
+{%- endfor %}
+set / system banner login-banner "AUTHORISED ACCESS ONLY — this device is managed by automation and every change is recorded"
+{# The device's own view of events, on the same time axis as the audit
+   trail and the container logs. Previously it stayed on the box, visible
+   only to whoever thought to look. #}
+set / system logging network-instance mgmt
+set / system logging remote-server {{ syslog_server }} transport udp remote-port {{ syslog_port }}
+{%- for subsystem in ['bgp', 'isis', 'netinst', 'mgmt', 'bfd', 'lldp'] %}
+set / system logging remote-server {{ syslog_server }} subsystem {{ subsystem }} priority match-above informational
+{%- endfor %}
+set / system logging remote-server {{ syslog_server }} subsystem acl priority match-above warning
+{# ---- BFD ---- #}
+{%- for iface in dev.links %}
+set / bfd subinterface {{ iface }}.0 admin-state enable
+set / bfd subinterface {{ iface }}.0 desired-minimum-transmit-interval 300000
+set / bfd subinterface {{ iface }}.0 required-minimum-receive 300000
+set / bfd subinterface {{ iface }}.0 detection-multiplier 3
+{%- endfor %}
+{# ---- IS-IS ---- #}
+set / network-instance default protocols isis instance main admin-state enable
+set / network-instance default protocols isis instance main level-capability L2
+set / network-instance default protocols isis instance main net [ 49.0001.{{ dev.sysid }}.00 ]
+set / network-instance default protocols isis instance main ipv4-unicast admin-state enable
+set / network-instance default protocols isis instance main ipv6-unicast admin-state enable
+set / network-instance default protocols isis instance main authentication keychain {{ keychain }}
+set / network-instance default protocols isis instance main overload on-boot set-bit true
+set / network-instance default protocols isis instance main overload on-boot timeout 90
+set / network-instance default protocols isis instance main interface system0.0 passive true
+{%- for iface, link in dev.links.items() %}
+{%- if link.get('igp', True) %}
+set / network-instance default protocols isis instance main interface {{ iface }}.0 circuit-type point-to-point
+set / network-instance default protocols isis instance main interface {{ iface }}.0 hello-padding adaptive
+set / network-instance default protocols isis instance main interface {{ iface }}.0 ipv4-unicast admin-state enable
+set / network-instance default protocols isis instance main interface {{ iface }}.0 ipv4-unicast enable-bfd true
+set / network-instance default protocols isis instance main interface {{ iface }}.0 ipv6-unicast admin-state enable
+set / network-instance default protocols isis instance main interface {{ iface }}.0 ipv6-unicast enable-bfd true
+{%- endif %}
+{%- endfor %}
+{# ---- BGP ---- #}
+{%- set lo4 = dev.loopback4.split('/')[0] %}
+set / network-instance default protocols bgp admin-state enable
+set / network-instance default protocols bgp autonomous-system {{ asn }}
+set / network-instance default protocols bgp router-id {{ lo4 }}
+set / network-instance default protocols bgp afi-safi ipv4-unicast admin-state enable
+set / network-instance default protocols bgp afi-safi ipv6-unicast admin-state enable
+{%- if dev.ibgp %}
+set / network-instance default protocols bgp group ibgp admin-state enable
+set / network-instance default protocols bgp group ibgp peer-as {{ asn }}
+set / network-instance default protocols bgp group ibgp transport local-address {{ lo4 }}
+set / network-instance default protocols bgp group ibgp afi-safi ipv4-unicast admin-state enable
+set / network-instance default protocols bgp group ibgp afi-safi ipv6-unicast admin-state enable
+set / network-instance default protocols bgp group ibgp failure-detection fast-failover true
+{%- if dev.rr_clients %}
+set / network-instance default protocols bgp group ibgp route-reflector client true
+set / network-instance default protocols bgp group ibgp route-reflector cluster-id {{ cluster_id }}
+{%- endif %}
+{%- for peer in dev.ibgp %}
+set / network-instance default protocols bgp neighbor {{ peer }} admin-state enable
+set / network-instance default protocols bgp neighbor {{ peer }} peer-group ibgp
+{%- endfor %}
+{%- endif %}
+{# ---- next-hop-self, border only ----
+   The transit interconnect is deliberately not in the IGP, so the core has
+   no route to 198.51.100.0 and every route the border reflects inward is
+   valid but unusable -- present in the BGP table with no flags, which is a
+   confusing way to have no internet.
+
+   Only the border rewrites the next hop. A route reflector must NOT: its
+   job is to reflect, and changing the next hop on reflected routes breaks
+   the path the client is supposed to use. #}
+{%- if dev.role == 'border' %}
+set / routing-policy policy ibgp-next-hop-self statement 10 action policy-result accept
+set / routing-policy policy ibgp-next-hop-self statement 10 action bgp next-hop set self
+set / routing-policy policy ibgp-next-hop-self default-action policy-result accept
+set / network-instance default protocols bgp group ibgp export-policy [ ibgp-next-hop-self ]
+{%- endif %}
+{# ---- eBGP, border only ---- #}
+{%- if dev.role == 'border' %}
+{%- for iface, link in dev.links.items() %}
+{%- if not link.get('igp', True) %}
+{%- set peer_ip = link.peer_ip %}
+set / network-instance default protocols bgp group ebgp-transit admin-state enable
+set / network-instance default protocols bgp group ebgp-transit peer-as {{ transit_asn }}
+set / network-instance default protocols bgp group ebgp-transit afi-safi ipv4-unicast admin-state enable
+set / network-instance default protocols bgp group ebgp-transit afi-safi ipv4-unicast ipv4-unicast prefix-limit-received max-received-routes 1000
+set / network-instance default protocols bgp group ebgp-transit afi-safi ipv4-unicast ipv4-unicast prefix-limit-received warning-threshold-pct 80
+set / network-instance default protocols bgp group ebgp-transit failure-detection enable-bfd true
+set / network-instance default protocols bgp group ebgp-transit failure-detection fast-failover true
+set / network-instance default protocols bgp neighbor {{ peer_ip }} admin-state enable
+set / network-instance default protocols bgp neighbor {{ peer_ip }} peer-group ebgp-transit
+{%- endif %}
+{%- endfor %}
+{%- endif %}
