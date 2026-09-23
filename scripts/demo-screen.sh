@@ -36,6 +36,7 @@ cd "$(dirname "$0")/.."
 MODE=heal
 case "${1:-}" in
   --provision|provision) MODE=provision; shift ;;
+  --leak|leak)           MODE=leak;      shift ;;
 esac
 DEV=${1:-srl1}
 ATTACH=${ATTACH:-1}
@@ -103,6 +104,21 @@ P4="while :; do
  clear; echo '── 4  THE ROUTERS THEMSELVES ──'; echo; printf '%s\\n' \"\$out\";
  sleep 4; done"
 
+# The route-leak screen. Same four boxes, four different questions, and
+# none of them need a second window:
+#
+#   what broke -> what the model was shown and said -> what the system
+#   did -> what the provider actually received
+#
+# The last one is the argument. The other three explain how it got there.
+# Built as its own mode because switching a pane mid-take means stopping
+# a loop, typing, and getting back — three chances to fumble on camera.
+if [ "$MODE" = leak ]; then
+    P2="while :; do clear; ./scripts/show-decision.sh $DEV 2>/dev/null; sleep 3; done"
+    P3="./scripts/watch-heal.sh 10"
+    P4="while :; do out=\$(./scripts/show-leak.sh 2>/dev/null); clear; printf '%s\\n' \"\$out\"; sleep 3; done"
+fi
+
 # --- build the grid: 2 x 2 ----------------------------------------------
 # Build all four panes first, THEN send each command to an explicit index.
 # Sending to "the active pane" as you split looks tidier and puts the
@@ -121,6 +137,8 @@ tmux select-layout -t "$SESSION:demo" tiled
 #   2 bottom-left  3 bottom-right
 if [ "$MODE" = provision ]; then
     tmux send-keys -t "$SESSION:demo.0" "clear; echo '── 1  YOU TYPE HERE ──'; echo; echo '   ./scripts/bootstrap.sh'; echo; echo '   wait for: == converging the devices to their source of truth'; echo" C-m
+elif [ "$MODE" = leak ]; then
+    tmux send-keys -t "$SESSION:demo.0" "clear; echo '── 1  YOU TYPE HERE ──'; echo; echo '   ./scripts/break.sh leak'; echo; echo '   then touch nothing. Watch pane 4.'; echo" C-m
 else
     tmux send-keys -t "$SESSION:demo.0" "clear; echo '── 1  YOU TYPE HERE ──'; echo; echo '   ./scripts/break.sh interface $DEV'; echo" C-m
 fi
