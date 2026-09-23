@@ -83,34 +83,25 @@ P3="./scripts/watch-heal.sh 10"
 #
 # Three short rows instead of one long one. It is also robust: no need to
 # work out which neighbour is on the far end of which link.
-P4="while :; do clear; echo '── THE ROUTERS THEMSELVES ──'; echo;
- printf '%-6s %-14s %s\\n' 'router' 'ethernet-1/1' 'IS-IS adj';
- for d in srl1 srl2 srl3; do
-   a=\$(docker exec clab-selfheal-\$d sr_cli -e 'info from state /interface ethernet-1/1 admin-state' 2>/dev/null | grep -o 'enable\\|disable' | head -1);
-   j=\$(docker exec clab-selfheal-\$d sr_cli -e 'show network-instance default protocols isis adjacency' 2>/dev/null | grep -c '^| ethernet');
-   printf '%-6s %-14s %s\\n' \"\$d\" \"\${a:-?}\" \"\${j:-?}\";
- done;
- echo; echo 'newest checkpoint on $DEV:';
- docker exec clab-selfheal-$DEV sr_cli 'info from state /system configuration checkpoint *' 2>/dev/null | grep -m1 -A1 'comment \"selfheal' | fold -w 88 | sed 's/^/   /';
+# Build the frame first, then clear and print it in one go.
+#
+# It used to clear and then fill, and filling means three docker execs
+# into three routers at a second or two each -- so the pane sat blank for
+# most of every cycle and looked like it was showing nothing at all. That
+# was the report: "the fourth pane shows one thing and never changes".
+# It was changing; it was mostly empty while it did.
+P4="while :; do
+ out=\$(printf '%-6s %-14s %s\\n' 'router' 'ethernet-1/1' 'IS-IS adj';
+   for d in srl1 srl2 srl3; do
+     a=\$(docker exec clab-selfheal-\$d sr_cli -e 'info from state /interface ethernet-1/1 admin-state' 2>/dev/null | grep -oE 'enable|disable' | head -1);
+     j=\$(docker exec clab-selfheal-\$d sr_cli -e 'show network-instance default protocols isis adjacency' 2>/dev/null | grep -c '^| ethernet');
+     printf '%-6s %-14s %s\\n' \"\$d\" \"\${a:-?}\" \"\${j:-?}\";
+   done;
+   echo;
+   echo 'newest change on $DEV, as the router recorded it:';
+   docker exec clab-selfheal-$DEV sr_cli 'info from state /system configuration checkpoint *' 2>/dev/null | grep -m1 'comment \"selfheal' | sed 's/.*comment \"selfheal //; s/\"\$//' | fold -w 40 -s | sed 's/^/   /');
+ clear; echo '── 4  THE ROUTERS THEMSELVES ──'; echo; printf '%s\\n' \"\$out\";
  sleep 4; done"
-
-# The provisioning screen is a different four panes from the healing one.
-# Nothing has healed yet -- the routers are empty and the story is where
-# the configuration comes from. Pane 1 runs bootstrap, pane 2 watches an
-# adjacency count go from nothing to two, pane 3 narrates the converge,
-# pane 4 watches the protocol layer appear on the border router.
-if [ "$MODE" = provision ]; then
-    # No `watch`: macOS does not ship it, and a pane that dies with
-    # "command not found" during a take is not recoverable afterwards.
-    # A shell loop is one line longer and always there.
-    P2="while :; do clear; echo '── 2  IS-IS ADJACENCIES ON $DEV ──'; echo;
- docker exec clab-selfheal-$DEV sr_cli -e 'show network-instance default protocols isis adjacency' 2>/dev/null | tail -8 || echo '   (router not up yet)';
- sleep 2; done"
-    P3="./scripts/watch-provision.sh"
-    P4="while :; do clear; echo '── 4  BGP ON $DEV, FROM THE DEVICE ──'; echo;
- docker exec clab-selfheal-$DEV sr_cli -- info /network-instance default protocols bgp 2>/dev/null | head -16 || echo '   (router not up yet)';
- sleep 3; done"
-fi
 
 # --- build the grid: 2 x 2 ----------------------------------------------
 # Build all four panes first, THEN send each command to an explicit index.
