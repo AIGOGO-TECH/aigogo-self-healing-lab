@@ -120,8 +120,15 @@ CASES = [
          why="the fabric plan is the source of truth for the protocol layer"),
     dict(name="route leak to transit", fault="route_leak",
          device="srl3", interface="", peer="198.51.100.1",
-         detail="srl3 is announcing 10.0.0.0/8, 172.16.0.0/12 to transit "
-                "peer 198.51.100.1 which NetBox does not permit",
+         # Verbatim from the beacon. The hand-written version this
+         # replaced said "srl3 is announcing 10.0.0.0/8 ... which NetBox
+         # does not permit" -- shorter, cleaner, and a sentence the system
+         # never produces. The model scored 10/10 on it and declined the
+         # real one in the lab, because the real one leads with a count
+         # and the phrase "not ours to announce" rather than with the
+         # prefixes. An eval written from imagination measures a system
+         # you imagined.
+         detail='srl3 is advertising 9 prefix(es) to 198.51.100.0 (AS64500) that NetBox does not permit: 7 prefix(es) that are not ours to announce (10.255.0.1/32, 10.255.0.2/32, 10.255.0.3/32, 10.255.1.0/31, ...); 2 more-specific(s) escaping an aggregate (203.0.113.0/26, 203.0.113.64/26). Permitted: 203.0.113.0/24',
          expect="bgp_policy",
          why="the routing policy on the box no longer matches NetBox"),
 ]

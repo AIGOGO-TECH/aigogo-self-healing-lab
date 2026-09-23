@@ -60,7 +60,7 @@ say_group "the aggregate"  '^203\.0\.113\.0/24$'  "the only one permitted"
 say_group "transit link"   '^198\.51\.100\.'      "the link to this provider"
 echo
 if [ "$N_RECV" -le 1 ]; then
-    printf "   ${G}${B}This is correct \u2014 the aggregate, and nothing else.${N}\n"
+    printf "   ${G}${B}This is correct — the aggregate, and nothing else.${N}\n"
 else
     printf "   ${R}${B}Our internal topology is on a transit provider's router.${N}\n"
     printf "   ${R}RFC 7908 Type 6: internal and more-specific prefixes, leaked.${N}\n"
