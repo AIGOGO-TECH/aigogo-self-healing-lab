@@ -165,14 +165,27 @@ else
 fi
 
 tmux select-pane -t "$SESSION:demo.0"
+# Click a pane to focus it, scroll it with the wheel.
+#
+# The prefix chord is Ctrl-b, and on a Mac that is also readline's
+# backward-char — so in a window that is not actually attached to tmux it
+# silently moves the cursor instead, which looks like tmux ignoring you.
+# Nothing here needs a chord now: click the pane, type in it.
+tmux set -t "$SESSION" mouse on
+
+# And a visible border, so it is obvious which pane has focus — with the
+# status bar off there is otherwise no clue at all.
 tmux set -t "$SESSION" status off
 tmux set -t "$SESSION" pane-border-style 'fg=colour238'
-tmux set -t "$SESSION" pane-active-border-style 'fg=colour238'
+tmux set -t "$SESSION" pane-active-border-style 'fg=colour35'
 
 if [ "$ATTACH" = "0" ]; then
     echo "session '$SESSION' built, not attached"
     exit 0
 fi
-echo "attaching. Ctrl-b then d to detach, or:  tmux kill-session -t $SESSION"
+echo "attaching."
+echo "  click a pane to type in it; the focused pane has a green border"
+echo "  Ctrl-c stops a pane's loop    Ctrl-b then d detaches"
+echo "  tmux kill-session -t $SESSION"
 sleep 1
 tmux attach -t "$SESSION"
