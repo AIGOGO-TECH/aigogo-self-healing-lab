@@ -120,6 +120,19 @@ for tid in list(traces)[-4:][::-1]:
     elif blocked and not decided:
         emit(f\"    \033[33m[!] BLOCKED\033[0m     {when(blocked['@timestamp']).strftime('%H:%M:%S')}  \"
               f\"{(blocked.get('reason') or '')[:58]}\")
+    elif resolved and not decided and not applied and not blocked:
+        # Detected, never decided, then gone. That is not a stall: one
+        # interface shut or one policy relaxed is seen by more than one
+        # beacon, and the change that answers the first trace clears the
+        # others. The pane used to show a pending spinner above a finished
+        # trace, which reads as stuck and is the first thing anyone
+        # watching asks about.
+        #
+        # No double quotes in this block: the whole renderer lives inside
+        # python3 -c "..." and a quote here ends the shell string. Third
+        # time, so it is written down.
+        emit('    \033[2m[-] no action              '
+             + 'another change cleared this; nothing was pushed\033[0m')
     else:
         # Two paths reach a change and only one of them asks the model.
         # The reactor's drift loop compares the device against NetBox and
