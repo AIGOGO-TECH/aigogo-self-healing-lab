@@ -157,7 +157,7 @@ for tid in list(traces)[-4:][::-1]:
             if verified:
                 line(True, 'verified', verified,
                      verified.get('reason') or 'the OUTCOME, not the config')
-            elif resolved:
+            elif resolved and (now - when(resolved['@timestamp'])).total_seconds() > 60:
                 # Resolved with no outcome check: the state carried no
                 # verify clause. golden_config is the honest example:
                 # IS-IS being configured has no cheap post-condition worth
@@ -166,6 +166,15 @@ for tid in list(traces)[-4:][::-1]:
                 emit('    \033[2m[-] verified     '
                       + '         this state has no outcome check\033[0m')
             else:
+                # A beacon can see the fault clear before the state has
+                # finished confirming, so the resolved record arrives
+                # first and the verified one a second or two later.
+                # Rendering that gap as no outcome check put exactly the
+                # wrong caption under a route-leak heal that verified on
+                # the wire one second after the screenshot.
+                #
+                # No backticks in here: this block lives inside a
+                # double-quoted shell string, and the shell ran them.
                 line(False, 'verified', None, 'checking the device...')
 
     line(bool(resolved), 'resolved', resolved, '' if resolved else '')

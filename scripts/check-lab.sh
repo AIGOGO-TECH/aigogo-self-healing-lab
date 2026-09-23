@@ -67,6 +67,41 @@ else
       "cd clab && containerlab deploy -t topo.yml --reconfigure"
 fi
 
+# The fabric, not just the cabling. A veth pair can exist between two
+# routers that have no IGP on them, which is the state a fresh deploy is
+# in and the state a half-finished bootstrap leaves behind.
+#
+# It is also what makes golden_config's own outcome check safe to skip
+# during initial provisioning: there the adjacency cannot form yet,
+# because the far end has not been converged. This is where that gets
+# proved instead, once every device has been.
+ADJ_BAD=''
+for dev in srl1 srl2 srl3; do
+  n=$(docker exec "clab-selfheal-$dev" sr_cli -e \
+        "show network-instance default protocols isis adjacency" 2>/dev/null |
+      grep -c '^| ethernet' || true)
+  # --out=json and a real parse. newline_values_only still prints the
+  # minion id, and `tr -dc 0-9` then welded the "1" out of "srl1" onto the
+  # value: srl1 wanted 12 adjacencies instead of 2, and a healthy fabric
+  # was reported broken. A checker that cries wolf is worse than none.
+  want=$(docker exec salt-master salt "$dev" pillar.get "isis_adjacencies:$dev" \
+         --out=json 2>/dev/null |
+         python3 -c 'import sys,json
+try:
+    v = list(json.load(sys.stdin).values())[0]
+    print(int(v))
+except Exception:
+    print("")' 2>/dev/null)
+  case "${want:-}" in ''|*[!0-9]*) want=2 ;; esac
+  [ "${n:-0}" -ge "$want" ] || ADJ_BAD="$ADJ_BAD $dev($((n + 0))/$want)"
+done
+if [ -z "$ADJ_BAD" ]; then
+  ok "the fabric is up" "every device has its IS-IS adjacencies"
+else
+  bad "the fabric is up" "short:$ADJ_BAD" \
+      "docker exec salt-master salt 'srl*' state.apply golden_config"
+fi
+
 # --- Salt -----------------------------------------------------------------
 sec "salt"
 

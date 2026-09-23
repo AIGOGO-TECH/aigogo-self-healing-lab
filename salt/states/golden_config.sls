@@ -46,8 +46,20 @@ golden-config-{{ grains['id'] }}:
         means anything, and arming this is what arms the revert timer.
         Without it the state committed permanently and unchecked, while
         the README claimed every remediation declared an outcome check. #}
+    {#- Not during initial provisioning. The check is "the fabric still has
+        its adjacencies", and on a first install there is no fabric yet:
+        srl1 is converged before srl2 has any IS-IS at all, so the
+        adjacency it is waiting for cannot form, the verify times out, the
+        commit is never confirmed and the router reverts the change. The
+        bootstrap then cannot finish — which is exactly what happened when
+        this check was added without thinking about ordering.
+
+        `override` is only ever set by initial provisioning, and it is
+        already the marker for "planned work, not self-healing". What
+        proves the fabric afterwards is check-lab.sh, which asserts the
+        adjacencies once every device has been converged. -#}
     {%- set want = salt['pillar.get']('isis_adjacencies:' ~ grains['id']) %}
-    {%- if want %}
+    {%- if want and not override %}
     - verify:
         fun: verify.isis_adjacencies
         kwargs:
