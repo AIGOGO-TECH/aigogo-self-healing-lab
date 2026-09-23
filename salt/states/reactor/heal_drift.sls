@@ -13,11 +13,35 @@
 # ceiling lives in audit.change_allowed(), which the state itself calls —
 # which also means it covers the n8n path with the same rule and the same
 # pillar setting.
-heal-{{ data['id'] }}-{{ data['state'] }}:
+{#- Validate before acting on anything the event carried.
+
+    A reactor SLS runs with master privileges and no eauth, and both of
+    the values below come straight off the event bus. `state` becomes the
+    state file that gets applied and `id` becomes the target. With
+    auto_accept on -- which this lab has, deliberately, and says so in
+    docs/production.md -- anything that can reach the master's 4505/4506
+    can publish an event, and the clab bridge that the routers sit on can
+    reach them.
+
+    So: the state must be one of the two this reactor exists for, and the
+    target must be the minion the event tag says it came from. Neither
+    check costs anything, and without them a compromised device could ask
+    the master to apply any state file in file_roots to any minion.
+
+    A rejected event is dropped silently here because a reactor has no
+    other channel; the beacon that fired it will fire again, and
+    check-lab.sh notices a fabric that stops converging. -#}
+{%- set ALLOWED_STATES = ['sync_from_netbox', 'sync_from_pillar'] %}
+{%- set ev_state = data.get('state', '') %}
+{%- set ev_id = data.get('id', '') %}
+{#- tag looks like salt/beacon/<minion>/<beacon>/<sub> -#}
+{%- set tag_minion = tag.split('/')[2] if tag.split('/') | length > 2 else '' %}
+{%- if ev_state in ALLOWED_STATES and ev_id and ev_id == tag_minion %}
+heal-{{ ev_id }}-{{ ev_state }}:
   local.state.apply:
-    - tgt: {{ data['id'] }}
+    - tgt: {{ ev_id }}
     - arg:
-      - {{ data['state'] }}
+      - {{ ev_state }}
     - kwarg:
         # Queue instead of refusing. There are now three sources of truth
         # watching one device -- interface descriptions from NetBox, the
@@ -31,3 +55,4 @@ heal-{{ data['id'] }}-{{ data['state'] }}:
         pillar:
           trace_id: {{ data.get('trace_id', '') }}
           actor: salt-reactor/config_drift
+{%- endif %}

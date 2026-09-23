@@ -16,6 +16,10 @@ event names the state to apply, so one reactor rule covers interface
 descriptions, BGP policy and the protocol layer alike.
 """
 
+import logging
+
+log = logging.getLogger(__name__)
+
 
 def __virtual__():
     return True
@@ -56,6 +60,26 @@ def beacon(config):
         test=True,
         commit=False,
     )
+    # A failed read is not a clean device.
+    #
+    # net.load_template returns {"result": False, ...} when the session has
+    # dropped, the JSON-RPC call timed out or the template would not render.
+    # Without this check that became diff_text = "", which became
+    # drifted = False, which called audit.track(faulty=False) -- and that
+    # closes any open fault and writes a fault.resolved record with a
+    # duration. An unreachable router therefore produced an audit trail
+    # saying its drift had been resolved.
+    #
+    # bgp_down.py and iface_down.py already refuse to have an opinion
+    # without a reading ("no reading is not the same as a healthy
+    # reading"). These four -- the ones wired to the reactor -- did not.
+    if not isinstance(result, dict) or not result.get("result"):
+        log.warning("%s: cannot read %s (%s) -- no verdict this pass",
+                    __name__.rsplit(".", 1)[-1], device,
+                    (result or {}).get("comment", "no comment")
+                    if isinstance(result, dict) else type(result).__name__)
+        return ret
+
     diff_text = result.get("diff", "") if isinstance(result, dict) else ""
     drifted = bool(diff_text.strip())
 
