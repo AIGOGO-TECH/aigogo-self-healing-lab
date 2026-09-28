@@ -336,6 +336,7 @@ true first.
 
 | File | What's in it |
 |---|---|
+| [`docs/reviewing.md`](docs/reviewing.md) | How to get inside every component — CLI, credentials, and where the interesting questions are |
 | [`docs/lessons.md`](docs/lessons.md) | Every bug hit while building this, and how each was fixed — version regressions, silent event loss, an LLM picking a wrong-but-allowed runbook |
 | [`docs/production.md`](docs/production.md) | What was hardened and why, what is still not production, and what scale would have to prove |
 | [`docs/flow-design.md`](docs/flow-design.md) | The pipeline, and the original fault cases |
