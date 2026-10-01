@@ -46,11 +46,10 @@ SPARE="kibana docker-logs docker-stats"
 report() {
   SWAP=$(sysctl -n vm.swapusage | sed 's/.*used = \([0-9.]*\)M.*/\1/')
   FREE=$(memory_pressure 2>/dev/null | tail -1 | grep -o '[0-9]*%' || echo '?')
-  # `|| echo 0` never fires here: the pipeline's status is awk's, and awk
+  # `|| echo 0` would never fire: the pipeline's status is awk's, and awk
   # succeeds while printing nothing when the router is not running. The
-  # empty string then reaches $(( ))  as `$(( / 1024 ))`, which is a syntax
-  # error -- so the whole report died the first time it was run against a
-  # torn-down lab, which is exactly when you run it.
+  # empty string would then reach $(( )) as `$(( / 1024 ))`, a syntax error
+  # -- on a torn-down lab, which is exactly when this is run.
   VMKB=$(docker exec clab-selfheal-srl1 grep MemFree /proc/meminfo 2>/dev/null | awk '{print $2}')
   case "${VMKB:-}" in
     ''|*[!0-9]*) VMFREE="" ;;

@@ -52,10 +52,10 @@ def beat():
 def bulk(index, docs, op="index"):
     """Write docs. op='create' is required for data streams.
 
-    Returns the number of documents Elasticsearch accepted. A partial
-    failure is reported rather than swallowed: silent rejection is exactly
-    the failure mode that cost two hours of missing Salt events once
-    already (see docs/lessons.md).
+    Returns the number of documents Elasticsearch accepted rather than
+    assuming they all landed. A rejected document is reported, because a
+    bulk write reports success at the HTTP level while rejecting items
+    inside the response body.
     """
     if not docs:
         return 0

@@ -3,11 +3,11 @@
 # (get_device_opts) reads opts['proxy'] directly and, under Salt 3008 in
 # this container setup, that dict is only ever populated from the local
 # minion config — pillar's 'proxy' key does not reliably merge into opts
-# before the first connection attempt. Documented in docs/lessons.md.
+# before the first connection attempt.
 master: salt-master
 # See the note in salt/proxy-srl1: tested, not assumed. The book's
 # "HTTP APIs can re-enable this" carve-out does not hold for a driver that
-# keeps a named candidate on the device. docs/lessons.md #58.
+# keeps a named candidate on the device.
 multiprocessing: false
 mine_enabled: true
 

@@ -6,7 +6,7 @@
 master: salt-master
 # See the note in salt/proxy-srl1: tested, not assumed. The book's
 # "HTTP APIs can re-enable this" carve-out does not hold for a driver that
-# keeps a named candidate on the device. docs/lessons.md #58.
+# keeps a named candidate on the device.
 multiprocessing: false
 mine_enabled: true
 

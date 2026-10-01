@@ -7,9 +7,9 @@
 #
 # Grafana is only the wake-up call. The alert carries device, fault and
 # interface as annotations, but n8n re-queries Elasticsearch for the full
-# fault record rather than trusting the notification payload -- Grafana's
-# templating rendered "[no value]" for anything it could not resolve.
-# See docs/lessons.md.
+# fault record rather than trusting the notification payload: Grafana's
+# templating silently renders a placeholder for anything it cannot resolve,
+# so the payload can arrive well-formed and empty.
 apiVersion: 1
 
 groups:

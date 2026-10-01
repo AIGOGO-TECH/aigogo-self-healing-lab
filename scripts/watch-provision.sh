@@ -10,8 +10,8 @@
 # drift from; there is a database and a template.
 #
 # It reads the same audit trail as watch-heal.sh: the convergence records
-# an override per device and state (this is planned work, not self-healing
-# -- see docs/lessons.md on why the two must not share a budget), then the
+# an override per device and state, because this is planned work rather
+# than self-healing and the two must not share a change budget. Then the
 # change, then the verification where the state has one.
 #
 #   ./scripts/watch-provision.sh          follow a bootstrap as it runs
@@ -43,7 +43,7 @@ while :; do
   docker exec elasticsearch curl -s -u "elastic:$ELASTIC_PASSWORD" \
     -X POST "http://localhost:9200/napalm-audit/_search?size=300" \
     -H 'Content-Type: application/json' \
-    -d "{\"sort\":[{\"@timestamp\":\"asc\"}],\"query\":{\"range\":{\"@timestamp\":{\"gte\":\"now-${MINUTES}m\"}}}}" \
+    -d "{\"sort\":[{\"@timestamp\":\"asc\"}],\"query\":{\"bool\":{\"must_not\":[{\"term\":{\"action\":\"fault.observed\"}}],\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"now-${MINUTES}m\"}}}]}}}" \
   | BGP_DEVICES="$BGP_DEVICES" ROWS="$ROWS" python3 -c "
 import json, os, sys
 from datetime import datetime, timezone

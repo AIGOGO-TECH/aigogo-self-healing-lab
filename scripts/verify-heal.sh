@@ -2,8 +2,8 @@
 # Confirm a heal by asking WHO did it, not what the device looks like.
 #
 # Watching admin-state alone cannot tell an automated remediation from an
-# engineer in another terminal -- which produced a false pass once already,
-# on the very test written to prove the automation was NOT acting.
+# engineer in another terminal, so it cannot answer the one question a test
+# of the automation is asking.
 #
 #   ./scripts/verify-heal.sh srl3 ethernet-1/1 <epoch-seconds-of-the-break>
 set -eu

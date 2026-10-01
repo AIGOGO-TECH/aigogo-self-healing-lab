@@ -18,10 +18,10 @@
     A reactor SLS runs with master privileges and no eauth, and both of
     the values below come straight off the event bus. `state` becomes the
     state file that gets applied and `id` becomes the target. With
-    auto_accept on -- which this lab has, deliberately, and says so in
-    docs/production.md -- anything that can reach the master's 4505/4506
-    can publish an event, and the clab bridge that the routers sit on can
-    reach them.
+    auto_accept on -- which this lab has, deliberately, so a rebuilt
+    proxy does not need a key accepted by hand -- anything that can reach
+    the master's 4505/4506 can publish an event, and the clab bridge the
+    routers sit on can reach them.
 
     So: the state must be one of the two this reactor exists for, and the
     target must be the minion the event tag says it came from. Neither

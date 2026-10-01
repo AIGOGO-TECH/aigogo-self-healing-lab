@@ -119,12 +119,11 @@ def isis_adjacency_up(interface, timeout=60, interval=DEFAULT_INTERVAL):
 def _adjacencies(text):
     """(interface, state) per adjacency row, matched as whole fields.
 
-    This used to be `if short in line`, which is a substring test, and
-    "ethernet-1/1" is a substring of "ethernet-1/10". On a device with ten
-    or more ports in a slot, an adjacency up on ethernet-1/10 satisfied a
-    change made to ethernet-1/1 -- and satisfying the check is what cancels
-    the revert timer, so the wrong link's health made the wrong change
-    permanent. Invisible in a four-port lab and certain on real hardware.
+    Whole fields, not a substring test: "ethernet-1/1" is a substring of
+    "ethernet-1/10", so on a device with ten or more ports in a slot an
+    adjacency up on one would satisfy a change made to the other. Satisfying
+    the check is what cancels the revert timer, so the wrong link's health
+    would make the wrong change permanent.
 
     SR Linux prints the table pipe-delimited:
         | ethernet-1/1 | 1 | srl2 | ... | up | ...

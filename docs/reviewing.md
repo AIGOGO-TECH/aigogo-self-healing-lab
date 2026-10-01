@@ -17,11 +17,12 @@ until it passes.
 ```bash
 ./scripts/check-lab.sh          # 20 assertions about whether it actually works
 cat docs/architecture.md        # what talks to what, and what each is trusted with
-cat docs/lessons.md             # 71 bugs, including the embarrassing ones
+cat docs/commands.md            # every command, grouped by the box it runs on
 ```
 
-`docs/lessons.md` is the honest history. `docs/production.md` is what is
-still not production and why.
+`./scripts/check-lab.sh` is the one to run first. It asks whether the parts
+are wired to each other, not whether they are alive, and each failure prints
+the command that repairs it.
 
 ---
 
@@ -156,9 +157,9 @@ The device argument is optional; each case has a sensible default.
 ```
 
 Only `prefixes` has an unbreak: the rest are what the lab is for, and
-undoing them by hand is how a test script once reported a heal that never
-happened (`docs/lessons.md`). If you need a device back without waiting,
-push the fix as a human and it will not count against the ceilings:
+undoing one by hand while waiting for the loop is how a test comes to report
+a heal that never happened. If you need a device back without waiting, push
+the fix as a human and it will not count against the ceilings:
 
 ```bash
 docker exec salt-master salt srl1 state.apply restore_interface \
@@ -190,28 +191,25 @@ runs. The cases are in the script and are worth disagreeing with.
 
 ---
 
-## 7. Where the interesting questions are
+---
 
-Places a reviewer will find something, roughly in order of how much is at
-stake:
+## 7. What to read once you are in
 
-1. **`salt/master.d/api.conf`** — what n8n may ask salt-api to do. eauth
-   restricts the function and the target; it cannot restrict kwargs.
-2. **`salt/states/_modules/audit.py`**, `change_allowed()` — the freeze,
-   the rate limit, the blast radius, and the override. Every branch that
-   returns `allowed: True` is worth an argument.
-3. **`n8n/fault-remediation-workflow.json`**, the node named *Validate
-   against whitelist* — the twelve lines between the model and the
-   network.
-4. **`salt/states/_states/audited.py`** — what gets recorded, when, and
-   what happens when the audit store is unreachable.
-5. **`salt/states/_beacons/`** — every one of them has to decide what to
-   do when the device cannot be read. They do not all answer the same way,
-   and the differences are deliberate; `docs/lessons.md` 66 explains one
-   of them.
-6. **`docs/production.md`** — the gaps that are known. Finding one that is
-   not on that list is the most useful thing a review can produce.
+Every control in this lab is a file you can open and argue with. The four
+worth arguing with first:
 
-An independent audit before publication found 28 issues; nine are fixed
-and described in `docs/lessons.md` 61–68. The rest are in
-`docs/production.md`. Neither list is assumed complete.
+- **`salt/master.d/api.conf`** — what n8n may ask salt-api to do. It names
+  three minions one at a time and permits exactly one function.
+- **`salt/states/_modules/audit.py`**, `change_allowed()` — the freeze, the
+  rate limit, the blast radius and the override marker.
+- **`n8n/fault-remediation-workflow.json`**, the node named *Validate against
+  whitelist* — the lines between the model and the network.
+- **`salt/states/_states/audited.py`** — what gets recorded, when, and what
+  happens when the audit store is unreachable.
+
+Each beacon in `salt/states/_beacons/` also has to decide what to do when the
+device cannot be read at all, and they do not all answer the same way. The
+differences are deliberate.
+
+If you find something here that is wrong, the useful form of that finding is
+a fault the lab cannot detect, or a change it would make that it should not.

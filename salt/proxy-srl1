@@ -3,7 +3,7 @@
 # (get_device_opts) reads opts['proxy'] directly and, under Salt 3008 in
 # this container setup, that dict is only ever populated from the local
 # minion config — pillar's 'proxy' key does not reliably merge into opts
-# before the first connection attempt. Documented in docs/lessons.md.
+# before the first connection attempt.
 master: salt-master
 # false, and tested rather than assumed. The canonical O'Reilly text says
 # this is needed for SSH-based proxies and "can be re-enabled for devices
@@ -14,7 +14,7 @@ master: salt-master
 # connect time (napalm-<session>), so every forked child drives the SAME
 # named candidate on the router and discards each other's work. The failure
 # is identical, and a per-process lock cannot reach across processes to stop
-# it. Measured: see docs/lessons.md #58.
+# it. Measured, not assumed.
 #
 # Concurrency safety is a property of where the state lives, not of the
 # transport. This driver keeps it on the device.

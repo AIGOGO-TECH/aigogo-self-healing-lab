@@ -33,7 +33,7 @@ while :; do
   docker exec elasticsearch curl -s -u "elastic:$ELASTIC_PASSWORD" \
     -X POST "http://localhost:9200/napalm-audit/_search?size=200" \
     -H 'Content-Type: application/json' \
-    -d "{\"sort\":[{\"@timestamp\":\"asc\"}],\"query\":{\"range\":{\"@timestamp\":{\"gte\":\"now-${MINUTES}m\"}}}}" \
+    -d "{\"sort\":[{\"@timestamp\":\"asc\"}],\"query\":{\"bool\":{\"must_not\":[{\"term\":{\"action\":\"fault.observed\"}}],\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"now-${MINUTES}m\"}}}]}}}" \
   | python3 -c "
 import json, sys, time
 from datetime import datetime, timezone
@@ -124,9 +124,7 @@ for tid in list(traces)[-4:][::-1]:
         # Detected, never decided, then gone. That is not a stall: one
         # interface shut or one policy relaxed is seen by more than one
         # beacon, and the change that answers the first trace clears the
-        # others. The pane used to show a pending spinner above a finished
-        # trace, which reads as stuck and is the first thing anyone
-        # watching asks about.
+        # others. Rendering it as pending would read as stuck.
         #
         # No double quotes in this block: the whole renderer lives inside
         # python3 -c "..." and a quote here ends the shell string. Third

@@ -5,9 +5,9 @@ LLM picks the runbook, Salt applies it under the device's own revert timer,
 and the change is kept only if the network actually recovers.
 
 Built for a talk at mnNOG 8 — *Self-healing network: what actually breaks
-it*. Everything here runs. Nothing is a diagram of an intention, and the
-things that went wrong are written down in `docs/lessons.md` rather than
-tidied away.
+it*. Everything here runs, on one laptop. Nothing in it is a diagram of an
+intention: every control described below can be switched off and watched to
+fail.
 
 ```
 fault on a device, or between two devices
@@ -145,11 +145,10 @@ So the containment is elsewhere, in four places:
   worked but whether the source of truth is right, which is what the
   fleet-wide blast radius is for.
 
-  This used to read "every remediation", and an audit before publication
-  found `golden_config` in the second group as well — rewriting IS-IS, BFD
-  and iBGP across the whole device with no outcome check and therefore, per
-  the line below, no revert timer. It now checks that the fabric still has
-  its adjacencies afterwards (`docs/lessons.md`, 68).
+  `golden_config` belongs in the first group and checks that the fabric
+  still has its adjacencies afterwards. Pushing the whole protocol layer is
+  precisely the change whose risk is that it converges cleanly and the
+  adjacencies drop, so the config converging proves nothing.
 * **Changes that declare a check and fail it are not kept.** Those commits
   are made with the device's own revert timer armed and confirmed only if
   the check passes, so a change that does not produce its intended outcome
@@ -164,8 +163,12 @@ So the containment is elsewhere, in four places:
   faults every device at once, and each of those remediations is
   individually within its per-device budget.
 
-`docs/lessons.md` has the run where the model picked a real runbook for the
-wrong reason, and what its own explanation turned out to say.
+A whitelist stops the model inventing a template. It does not stop the
+model picking a real one that does not address the fault — and because these
+templates are idempotent, a wrong choice succeeds, changes nothing, and looks
+handled. That is what the outcome checks above are for: a remediation that
+repairs something has to prove the network recovered, not that the push
+returned success.
 
 ## Who changed what, and when
 
@@ -259,9 +262,9 @@ is green. Each failure carries the command that repairs it, and the exit
 code is the number of failures.
 
 It exists because a half-finished bootstrap and a finished one leave
-identical evidence — every container up, every health check green — and
-the difference only surfaces minutes later, as a fault that is detected
-and then never acted on (`docs/lessons.md`, 61).
+identical evidence — every container up, every health check green — and the
+difference only surfaces minutes later, as a fault that is detected and then
+never acted on.
 
 | Service | URL | Login |
 |---|---|---|
@@ -271,8 +274,9 @@ and then never acted on (`docs/lessons.md`, 61).
 | n8n | http://127.0.0.1:5678 | owner account created on first visit |
 | salt-api | http://127.0.0.1:8001 | shared secret, see `.env` |
 
-Ports bind to `127.0.0.1`. Nothing in this stack is safe on a LAN without
-TLS termination in front of it — see `docs/production.md`.
+Ports bind to `127.0.0.1`. There is no TLS anywhere inside the stack and no
+operator authentication in front of it, so nothing here is safe on a LAN
+without termination and an auth layer ahead of it.
 
 ## Watching it work
 
@@ -328,24 +332,25 @@ The one exception is the SR Linux password, which `gen-secrets.sh` leaves
 at Nokia's documented default, because the containerlab nodes are built
 with it. Change it on the devices first.
 
-Read `docs/production.md` before pointing any of this at real equipment. It
-lists what is hardened, what is deliberately not, and what would have to be
-true first.
+**This is a lab, not a product.** It is built to be believed on a laptop, in
+front of an audience, and it has not been run at scale, behind TLS, or with
+operator authentication. Treat every control in it as a design worth copying
+and none of it as hardened. Anything pointed at real equipment needs its own
+threat model, its own secret management, and its own scale test first.
 
 ## Documentation
 
 | File | What's in it |
 |---|---|
-| [`docs/reviewing.md`](docs/reviewing.md) | How to get inside every component — CLI, credentials, and where the interesting questions are |
-| [`docs/lessons.md`](docs/lessons.md) | Every bug hit while building this, and how each was fixed — version regressions, silent event loss, an LLM picking a wrong-but-allowed runbook |
-| [`docs/production.md`](docs/production.md) | What was hardened and why, what is still not production, and what scale would have to prove |
-| [`docs/flow-design.md`](docs/flow-design.md) | The pipeline, and the original fault cases |
+| [`docs/commands.md`](docs/commands.md) | Every command worth running, per box — routers, Salt, NetBox, Elasticsearch, the UIs |
+| [`docs/reviewing.md`](docs/reviewing.md) | How to get inside every component, and what to read once you are in |
 | [`docs/architecture.md`](docs/architecture.md) | How the pieces are wired, and what each one is trusted with |
+| [`docs/flow-design.md`](docs/flow-design.md) | The pipeline, and the fault cases it was built around |
 | [`docs/addressing.md`](docs/addressing.md) | Every address in the lab, and which file is the source of it |
-| [`docs/screenshot-shotlist.md`](docs/screenshot-shotlist.md) | Where each screenshot in the talk came from |
+| [`napalm-logs/README.md`](napalm-logs/README.md) | The SR Linux syslog profile, and push detection measured against poll |
 
-`docs/lessons.md` is the one worth reading if you are about to build
-something similar. It is not a list of successes.
+`docs/commands.md` is the one to open first if the lab is running and
+something looks wrong.
 
 ## Licence
 

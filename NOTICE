@@ -13,9 +13,9 @@ Questions, corrections and pull requests are best raised as issues on the
 repository. That is the channel that is actually read.
 
 If you use this, the Apache licence asks you to keep this notice with it.
-That is the only thing asked for. It is a lab, it is meant to be taken
-apart, and the part worth reading is docs/lessons.md — every bug hit while
-building it, including the ones that were embarrassing.
+That is the only thing asked for. It is a lab and it is meant to be taken
+apart: every control in it can be switched off and watched to fail, which is
+the only way to find out whether it was doing anything.
 
 ---
 
