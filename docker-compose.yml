@@ -430,7 +430,7 @@ services:
       - SALT_API_USER=n8n
       - SALT_API_SECRET=${SALT_API_SECRET:?}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
     mem_limit: 900m
     ports:
       - "${BIND_ADDR:-127.0.0.1}:5678:5678"

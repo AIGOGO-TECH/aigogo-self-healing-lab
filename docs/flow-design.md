@@ -26,8 +26,8 @@ component in this repo, not a diagram of an intention.
                                │  HTTP POST (alert payload)
    ┌───────────────────────────▼─────────────────────────────────────┐
    │ 5. DECIDE — n8n webhook receives the alert                      │
-   │    → asks local llama3.1: "which template fixes this?"          │
-   │    → llama returns ONE name from a fixed whitelist + params     │
+   │    → asks the local model: "which template fixes this?"          │
+   │    → it returns ONE name from a fixed whitelist + params     │
    └───────────────────────────┬─────────────────────────────────────┘
                                │  POST /run  (salt-api, eauth)
    ┌───────────────────────────▼─────────────────────────────────────┐

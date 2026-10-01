@@ -30,7 +30,7 @@
 # showed one word -- FIRING -- and n8n's showed a log that never quite
 # lines up with the decision. Pane 3 shows
 #
-#     decision.made  accepted  n8n/llama3.1  "interface was administratively shut"
+#     decision.made  accepted  n8n/qwen2.5:7b  "interface was administratively shut"
 #
 # which is the alert, the model, and its reasoning in one line.
 #
@@ -89,7 +89,7 @@ P2="./scripts/watch-device.sh"
 #
 #     srl1  ethernet-1/1 on srl1 is administratively down
 #       [x] detected   12:55:30  salt-beacon:srl1
-#       [x] decided    12:56:10  n8n/llama3.1 — Ethernet port is administratively shut
+#       [x] decided    12:56:10  n8n/qwen2.5:7b — Ethernet port is administratively shut
 #       [x] verified   12:56:21  ethernet-1/1 is up
 #
 # It is unfiltered by device on purpose: one interface shut raises two

@@ -55,14 +55,14 @@ OLLAMA_PORT=$(printf '%s' "${OLLAMA_URL:-http://host.docker.internal:11434}" |
               sed 's|.*:||; s|/.*||')
 if curl -sf "http://localhost:${OLLAMA_PORT:-11434}/api/tags" >/dev/null 2>&1; then
   if ! curl -sf "http://localhost:${OLLAMA_PORT:-11434}/api/tags" |
-       grep -q "${OLLAMA_MODEL:-llama3.1}"; then
-    echo "WARNING: ollama is running but ${OLLAMA_MODEL:-llama3.1} is not pulled." >&2
-    echo "         ollama pull ${OLLAMA_MODEL:-llama3.1}" >&2
+       grep -q "${OLLAMA_MODEL:-qwen2.5:7b}"; then
+    echo "WARNING: ollama is running but ${OLLAMA_MODEL:-qwen2.5:7b} is not pulled." >&2
+    echo "         ollama pull ${OLLAMA_MODEL:-qwen2.5:7b}" >&2
   fi
 else
   echo "WARNING: ollama does not answer on localhost:${OLLAMA_PORT:-11434}." >&2
   echo "         Everything else will come up; the decision step will not." >&2
-  echo "         ollama serve &  &&  ollama pull ${OLLAMA_MODEL:-llama3.1}" >&2
+  echo "         ollama serve &  &&  ollama pull ${OLLAMA_MODEL:-qwen2.5:7b}" >&2
 fi
 
 # Postgres applies POSTGRES_PASSWORD only when it initialises an empty data

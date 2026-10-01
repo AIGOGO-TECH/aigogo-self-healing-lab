@@ -21,7 +21,7 @@ Two rules save most of the debugging time:
 ## 0. The fastest possible health check
 
 ```sh
-./scripts/check-lab.sh          # ~20 checks, exit code = number of failures
+./scripts/check-lab.sh          # exit code = number of failed checks
 ./scripts/evidence.sh 30        # everything the system did in the last 30 min
 ```
 

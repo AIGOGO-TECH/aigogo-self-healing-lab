@@ -160,7 +160,7 @@ def push_template(template_name, context=None, trace_id=None, actor=None,
     carries the trace id and the actor onto the device itself.
 
         A:admin# info from state /system configuration checkpoint *
-        ... selfheal trace=srl3-20260915T041311Z-4f2a1c actor=n8n/llama3.1
+        ... selfheal trace=srl3-20260915T041311Z-4f2a1c actor=n8n/qwen2.5:7b
             state=restore_interface
 
     Anyone holding a CLI session on that router can see which automated

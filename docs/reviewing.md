@@ -15,7 +15,7 @@ until it passes.
 ## 0. Orientation, in three commands
 
 ```bash
-./scripts/check-lab.sh          # 20 assertions about whether it actually works
+./scripts/check-lab.sh          # asks whether the parts are wired to each other
 cat docs/architecture.md        # what talks to what, and what each is trusted with
 cat docs/commands.md            # every command, grouped by the box it runs on
 ```

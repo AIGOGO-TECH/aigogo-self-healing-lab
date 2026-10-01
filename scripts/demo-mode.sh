@@ -2,9 +2,9 @@
 # Make room on the laptop before recording, and give it back afterwards.
 #
 # The problem is arithmetic, not configuration. This lab is developed on a
-# 16 GB machine whose Docker VM is allocated 11.7 GB, and llama3.1 needs
-# 5.1 GB of HOST memory -- it runs natively, not in a container. 11.7 plus
-# 5.1 is 16.8 on a machine that has 16, so the model's arrival is paid for
+# 16 GB machine whose Docker VM is allocated 11.7 GB, and qwen2.5:7b needs
+# 4.7 GB of HOST memory -- it runs natively, not in a container. 11.7 plus
+# 4.7 is 16.4 on a machine that has 16, so the model's arrival is paid for
 # in swap.
 #
 # Measured through one real decision, with nothing else running:
@@ -23,7 +23,7 @@
 #   1. load the model BEFORE the recording starts, and keep it loaded.
 #      Ollama unloads after five minutes idle by default, so between takes
 #      it evaporates and the next take pays for it again. Pinning it means
-#      the 5.1 GB is already resident when you press record.
+#      the 4.7 GB is already resident when you press record.
 #
 #   2. stop what the demo does not show. Kibana alone is ~1 GB, and the
 #      four-pane screen never opens it.
@@ -74,7 +74,7 @@ except Exception:
   else
     printf "  ${B}docker vm${N}   ${D}routers are not running${N}\n"
   fi
-  printf "  ${B}%-11s${N} %s\n" "${OLLAMA_MODEL:-llama3.1}" "$RESIDENT"
+  printf "  ${B}%-11s${N} %s\n" "${OLLAMA_MODEL:-qwen2.5:7b}" "$RESIDENT"
 
   # Can a take start right now? Two ceilings answer that, and they are not
   # the same question. The per-device budget refuses a fourth change to one
@@ -149,9 +149,9 @@ case "${1:-report}" in
     # never gives the memory back, including after the recording. Two hours
     # covers a session and expires on its own if this script is forgotten.
     printf "${B}== warming the model ==${N}\n"
-    echo "  loading ${OLLAMA_MODEL:-llama3.1} and pinning it for 2 hours"
+    echo "  loading ${OLLAMA_MODEL:-qwen2.5:7b} and pinning it for 2 hours"
     curl -s --max-time 180 http://localhost:11434/api/generate \
-      -d '{"model":"'"${OLLAMA_MODEL:-llama3.1}"'","prompt":"ready","stream":false,"keep_alive":"2h"}' \
+      -d '{"model":"'"${OLLAMA_MODEL:-qwen2.5:7b}"'","prompt":"ready","stream":false,"keep_alive":"2h"}' \
       >/dev/null 2>&1 || {
         echo "  ollama is not answering on localhost:11434." >&2
         echo "  Open Ollama.app (or run: ollama serve &), then run this again." >&2
@@ -170,7 +170,7 @@ case "${1:-report}" in
     done
     echo "  releasing the model"
     curl -s --max-time 30 http://localhost:11434/api/generate \
-      -d '{"model":"'"${OLLAMA_MODEL:-llama3.1}"'","prompt":"","keep_alive":0}' >/dev/null 2>&1 || true
+      -d '{"model":"'"${OLLAMA_MODEL:-qwen2.5:7b}"'","prompt":"","keep_alive":0}' >/dev/null 2>&1 || true
     report
     ;;
   *) report ;;

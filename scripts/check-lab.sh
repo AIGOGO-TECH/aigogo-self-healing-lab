@@ -314,11 +314,11 @@ OPORT=$(printf '%s' "${OLLAMA_URL:-http://host.docker.internal:11434}" | sed 's|
 TAGS=$(curl -sf --max-time 10 "http://localhost:${OPORT:-11434}/api/tags" 2>/dev/null)
 if [ -z "$TAGS" ]; then
   bad "ollama answers" "nothing on localhost:${OPORT:-11434}" "ollama serve &"
-elif printf '%s' "$TAGS" | grep -q "${OLLAMA_MODEL:-llama3.1}"; then
-  ok "ollama answers" "${OLLAMA_MODEL:-llama3.1} is pulled"
+elif printf '%s' "$TAGS" | grep -q "${OLLAMA_MODEL:-qwen2.5:7b}"; then
+  ok "ollama answers" "${OLLAMA_MODEL:-qwen2.5:7b} is pulled"
 else
-  bad "ollama answers" "running, but ${OLLAMA_MODEL:-llama3.1} is not pulled" \
-      "ollama pull ${OLLAMA_MODEL:-llama3.1}"
+  bad "ollama answers" "running, but ${OLLAMA_MODEL:-qwen2.5:7b} is not pulled" \
+      "ollama pull ${OLLAMA_MODEL:-qwen2.5:7b}"
 fi
 
 RULES=$(curl -s --max-time 10 -u "${GRAFANA_ADMIN_USER:-admin}:$GRAFANA_ADMIN_PASSWORD" \

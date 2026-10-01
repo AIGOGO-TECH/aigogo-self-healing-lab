@@ -7,7 +7,7 @@ plus one thing that is deliberately not a container.
 ```
                          ┌─ HOST (macOS, Docker Desktop 11.7 GiB) ──────────────────────────┐
                          │                                                                   │
-                         │   ollama  llama3.1        ← NATIVE, not a container, so it gets   │
+                         │   ollama  qwen2.5:7b      ← NATIVE, not a container, so it gets   │
                          │   :11434                    the GPU. host.docker.internal         │
                          └───────────────────────────────────────────────────────────────────┘
                                               ▲
@@ -18,7 +18,7 @@ plus one thing that is deliberately not a container.
                      Grafana  ─────►│  n8n  2.38.7       │  127.0.0.1:5678
                      webhook        │  • normalise alert │
                                     │  • circuit breaker │  ← counts unattended changes
-                                    │  • ask llama3.1    │
+                                    │  • ask qwen2.5:7b  │
                                     │  • whitelist (7)   │  ← fail closed
                                     └─────────┬──────────┘
                                               │ salt-api  POST 127.0.0.1:8001
@@ -114,7 +114,7 @@ A monitored interface is shut by hand on srl1. Nothing else is touched.
 
  T+29s    n8n:  normalise alert (from Grafana's labels, one fault)
                 circuit breaker: unattended changes for srl1 in the last hour?
-                prompt llama3.1 with 7 runbook names, each described by the
+                prompt the model with 7 runbook names, each described by the
                   FAULT it repairs
                 validate answer against the whitelist — fail closed
           decision.made  accepted  "Administrative state ... re-enabled"

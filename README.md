@@ -11,10 +11,10 @@ fail.
 
 ```
 fault on a device, or between two devices
-  → a Salt beacon notices, and mints a trace id          (15-20s)
+  → a Salt beacon notices, and mints a trace id          (2-14s, interval-bound)
   → Salt event bus → Elasticsearch
   → Grafana alert rule → webhook
-  → n8n asks a local llama3.1 which runbook applies
+  → n8n asks a local qwen2.5:7b which runbook applies
   → whitelist gate     a name that is not on the list stops here
   → change gate        freeze? rate limit? blast radius? audit store up?
   → salt-api → NAPALM → the router, committed with a revert timer armed
@@ -22,9 +22,19 @@ fault on a device, or between two devices
   → confirmed if the network recovered; reverted by the device if not
 ```
 
-A clean run of that, measured end to end, is **about 35 seconds** from
-`admin-state disable` to the interface carrying traffic again. It is slower
-when several faults are in flight at once, and the audit trail says why.
+Measured over ten consecutive interface faults, rotating across all three
+routers: **median 43s** from `admin-state disable` to the fault closing,
+min 37s, max 48s, every stage recorded on every run. The spread is small
+because the slowest step is a beacon interval and those are fixed.
+
+A route leak takes longer and varies much more — median 99s over nine runs,
+min 39s, max 300s — and almost none of that is the repair, which takes 7
+seconds from push to verified. The rest is the alerting layer: the leak case
+always raises the same device and fault, so consecutive runs are paced by the
+notification policy's repeat interval rather than by anything in Salt.
+
+`./scripts/soak.sh` produces these numbers, and `docs/commands.md` explains
+why the two fault classes do not run on the same clock.
 
 ## What's in it
 
@@ -71,7 +81,8 @@ And three with no runbook, on purpose:
 5. **Link down** — the interface is enabled and the link is down anyway: a
    cut fibre, a dead transceiver, the far end shut. Nothing Salt can push
    to this router will light that link, so the model is expected to decline
-   — and it does, in about fifteen seconds:
+   — and it does. Over ten runs it declined the far end ten times out of ten,
+   at a median of 33s:
 
    ```
    07:42:09  fault.detected      interface_link_down
@@ -180,7 +191,7 @@ run — and onto the device:
 ```
 A:srl3# info from state /system configuration checkpoint *
     checkpoint 0 {
-        comment "selfheal trace=srl3-20260916T075658Z-36367a actor=n8n/llama3.1 state=restore_interface"
+        comment "selfheal trace=srl3-20260916T075658Z-36367a actor=n8n/qwen2.5:7b state=restore_interface"
         created "2026-09-16T07:57:22.986Z"
     }
 ```
@@ -199,9 +210,9 @@ you would roll back to. The same id in Kibana gives the whole story:
 
 ```
 05:12:04  fault.detected     open      salt-beacon:srl3
-05:12:28  decision.made      accepted  n8n/llama3.1      restore_interface
-05:12:34  change.applied     success   n8n/llama3.1      (3.4s, revert timer armed)
-05:12:36  change.verified    success   n8n/llama3.1      ethernet-1/1 is up
+05:12:28  decision.made      accepted  n8n/qwen2.5:7b      restore_interface
+05:12:34  change.applied     success   n8n/qwen2.5:7b      (3.4s, revert timer armed)
+05:12:36  change.verified    success   n8n/qwen2.5:7b      ethernet-1/1 is up
 05:12:37  fault.resolved     resolved  salt-beacon:srl3  33.2s
 ```
 
@@ -240,7 +251,7 @@ gets the GPU.
 
 ```bash
 ollama serve &
-ollama pull llama3.1
+ollama pull qwen2.5:7b
 
 ./scripts/gen-secrets.sh    # writes .env, mode 0600, gitignored
 ./scripts/bootstrap.sh      # routers, stack, Salt sync, NetBox, workflows

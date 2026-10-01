@@ -14,7 +14,7 @@
 #
 #   srl1  ethernet-1/1 on srl1 is administratively down
 #     [x] detected   12:55:30  salt-beacon:srl1
-#     [x] decided    12:56:10  n8n/llama3.1 — "Ethernet port is administratively shut"
+#     [x] decided    12:56:10  n8n/qwen2.5:7b — "Ethernet port is administratively shut"
 #     [ ] applying...                                        waiting 6s
 #
 # A fault that is refused shows the refusal in place of the remaining
@@ -85,7 +85,7 @@ for tid in list(traces)[-4:][::-1]:
     # decline text. The pane then read
     #
     #   srl2  No template actually addresses a physical issue...
-    #     [x] detected          n8n/llama3.1
+    #     [x] detected          n8n/qwen2.5:7b
     #
     # which states the refusal as the fault, credits the model with the
     # detection, and prints no time for it. Three false claims in two
