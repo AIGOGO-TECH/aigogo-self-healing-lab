@@ -144,5 +144,19 @@
         ]
       }
     ]
+  },
+  "push_detect": {
+    "cluster": [],
+    "indices": [
+      {
+        "names": [
+          "napalm-audit"
+        ],
+        "privileges": [
+          "create_doc",
+          "auto_configure"
+        ]
+      }
+    ]
   }
 }

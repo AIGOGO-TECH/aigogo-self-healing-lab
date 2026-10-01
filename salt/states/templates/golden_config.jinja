@@ -25,11 +25,25 @@ set / system banner login-banner "AUTHORISED ACCESS ONLY — this device is mana
    trail and the container logs. Previously it stayed on the box, visible
    only to whoever thought to look. #}
 set / system logging network-instance mgmt
-set / system logging remote-server {{ syslog_server }} transport udp remote-port {{ syslog_port }}
+{# Two consumers, two destinations: the collector that files every message for
+   a human to read, and napalm-logs, which structures the ones it has a profile
+   for. Falls back to the single legacy destination so a pillar written before
+   the push path existed still renders. #}
+{#- Truthiness, not `default()`: default() substitutes only for an UNDEFINED
+    name, and golden_config.sls always defines this key -- as [] when the
+    pillar predates the push path. The loop then rendered no remote-server
+    line at all, so a freshly provisioned device got no syslog destination
+    and the only symptom was silence. Jinja's Undefined is falsy, so one
+    test covers both the undefined and the empty case. #}
+{%- set destinations = syslog_destinations if syslog_destinations
+    else [{'host': syslog_server, 'port': syslog_port}] %}
+{%- for dest in destinations %}
+set / system logging remote-server {{ dest.host }} transport udp remote-port {{ dest.port }}
 {%- for subsystem in ['bgp', 'isis', 'netinst', 'mgmt', 'bfd', 'lldp'] %}
-set / system logging remote-server {{ syslog_server }} subsystem {{ subsystem }} priority match-above informational
+set / system logging remote-server {{ dest.host }} subsystem {{ subsystem }} priority match-above informational
 {%- endfor %}
-set / system logging remote-server {{ syslog_server }} subsystem acl priority match-above warning
+set / system logging remote-server {{ dest.host }} subsystem acl priority match-above warning
+{%- endfor %}
 {# ---- BFD ---- #}
 {%- for iface in dev.links %}
 set / bfd subinterface {{ iface }}.0 admin-state enable

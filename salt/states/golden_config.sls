@@ -36,6 +36,10 @@ golden-config-{{ grains['id'] }}:
         cluster_id: {{ fabric.get('rr_cluster_id') }}
         syslog_server: {{ fabric.get('syslog_server') }}
         syslog_port: {{ fabric.get('syslog_port') }}
+        {#- Every syslog consumer, so the template does not have to know how
+            many there are. The two singular keys above stay for a pillar
+            written before the push path existed. #}
+        syslog_destinations: {{ fabric.get('syslog_destinations', []) | tojson }}
     - state_name: golden_config
     - fault: config_drift
     {#- The outcome, not the configuration. This state pushes the whole

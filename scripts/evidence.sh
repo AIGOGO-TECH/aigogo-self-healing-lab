@@ -21,11 +21,22 @@ ARG=${1:-}
 MINUTES=${2:-15}
 
 case "$ARG" in
-  trace:*)  QUERY="{\"term\":{\"trace_id\":\"${ARG#trace:}\"}}" ;;
-  "")       QUERY="{\"range\":{\"@timestamp\":{\"gte\":\"now-${MINUTES}m\"}}}" ;;
-  *)        QUERY="{\"bool\":{\"filter\":[{\"term\":{\"device\":\"$ARG\"}},
+  trace:*)  INNER="{\"term\":{\"trace_id\":\"${ARG#trace:}\"}}" ;;
+  "")       INNER="{\"range\":{\"@timestamp\":{\"gte\":\"now-${MINUTES}m\"}}}" ;;
+  *)        INNER="{\"bool\":{\"filter\":[{\"term\":{\"device\":\"$ARG\"}},
                     {\"range\":{\"@timestamp\":{\"gte\":\"now-${MINUTES}m\"}}}]}}" ;;
 esac
+
+# The push detection path writes fault.observed to this same trail, one row per
+# syslog message, and the sort is ascending against a size cap -- so its rows
+# take slots ahead of the incident they were meant to sit beside. They are a
+# measurement, not a narrative; ./scripts/compare-paths.sh is where they read.
+# PUSH=1 puts them back for anyone who wants the raw trail.
+if [ "${PUSH:-0}" = 1 ]; then
+  QUERY="$INNER"
+else
+  QUERY="{\"bool\":{\"must_not\":[{\"term\":{\"action\":\"fault.observed\"}}],\"filter\":[$INNER]}}"
+fi
 
 docker exec elasticsearch curl -s -u "elastic:$ELASTIC_PASSWORD" \
   -X POST "http://localhost:9200/napalm-audit/_search?size=100" \

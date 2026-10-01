@@ -6,8 +6,8 @@
 # traffic.
 #
 # Conventions applied to every service below:
-#   * image tags are pinned -- :latest turned a working stack into a broken
-#     one twice while this was being built (see docs/lessons.md)
+#   * image tags are pinned, because :latest makes the stack's behaviour
+#     depend on when it was built
 #   * every stateful service has a named volume; nothing important lives in
 #     a container's writable layer
 #   * every service declares a healthcheck, and depends_on waits on health,
@@ -50,9 +50,10 @@ services:
     logging: *logging
     environment:
       - discovery.type=single-node
-      # Security on. Transport/HTTP TLS is deliberately off *inside* this
-      # bridge network and nothing else: see docs/production.md for the
-      # exact change, and why it is the one simplification left standing.
+      # Security on, TLS off. Deliberate, and scoped to this bridge network:
+      # authentication is what stops one component reading another's data,
+      # and the traffic never leaves the host. Anything exposed beyond it
+      # needs the transport and HTTP SSL settings turned back on.
       - xpack.security.enabled=true
       - xpack.security.http.ssl.enabled=false
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:?set it in .env}
@@ -83,7 +84,7 @@ services:
   # component. Runs to completion; salt-master will not start until it has.
   # The templates must exist before the first Salt event creates an index,
   # or Elasticsearch infers a mapping from whatever the first document
-  # happened to contain -- which once killed every Salt event for two hours.
+  # happened to contain, and rejects every later document that disagrees.
   es-init:
     image: python:3.12-slim
     container_name: es-init
@@ -104,6 +105,7 @@ services:
       - STATS_ES_PASSWORD=${STATS_ES_PASSWORD:?}
       - LOGS_ES_PASSWORD=${LOGS_ES_PASSWORD:?}
       - WATCHDOG_ES_PASSWORD=${WATCHDOG_ES_PASSWORD:?}
+      - PUSH_DETECT_ES_PASSWORD=${PUSH_DETECT_ES_PASSWORD:?}
     volumes:
       - ./es:/es:ro
       # Mounted so this container, which runs as root, can hand the
@@ -382,6 +384,7 @@ services:
     depends_on:
       es-init: { condition: service_completed_successfully }
     environment:
+      - MAX_CHANGES_PER_HOUR=${MAX_CHANGES_PER_HOUR:-3}
       - N8N_SECURE_COOKIE=false
       - GENERIC_TIMEZONE=Asia/Ulaanbaatar
       - TZ=Asia/Ulaanbaatar
@@ -550,6 +553,77 @@ services:
     networks:
       clab:
         ipv4_address: ${SYSLOG_ADDR:-172.30.30.30}
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime('/tmp/heartbeat') < 180 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # =========================================================================
+  # The PUSH detection path, running alongside the poll path to be measured
+  # against it. Neither remediates from here -- see collector/pushdetect.py.
+  # =========================================================================
+  #
+  # A second syslog destination, not a fan-out from the first. The routers
+  # support several remote-servers, so each consumer gets its own port and
+  # neither can drop the other's traffic; a relay process in between would be
+  # one more thing whose silence looks like health.
+  napalm-logs:
+    <<: *restart
+    build: ./napalm-logs
+    image: selfheal-napalm-logs:0.11.0
+    container_name: napalm-logs
+    profiles: [core]
+    logging: *logging
+    mem_limit: 256m
+    volumes:
+      # --config-path takes the directory that CONTAINS srlinux/, because
+      # napalm-logs reads the device OS name from the directory name.
+      - ./napalm-logs:/profiles:ro
+    command:
+      - napalm-logs
+      - --config-path=/profiles
+      - --port=5515
+      - --publish-port=49017
+      - --disable-security
+      - --log-file=cli
+      - --log-level=info
+    networks:
+      clab:
+        ipv4_address: ${NAPALM_LOGS_ADDR:-172.30.30.31}
+    healthcheck:
+      # The publisher socket being bound is the only thing worth checking: the
+      # daemon starts, binds, and then waits, so a listening port is the
+      # difference between running and running usefully.
+      test: ["CMD-SHELL", "python3 -c \"import socket,sys; s=socket.socket(); sys.exit(0 if s.connect_ex(('127.0.0.1',49017))==0 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  push-detect:
+    <<: *restart
+    build: ./napalm-logs
+    image: selfheal-napalm-logs:0.11.0
+    container_name: push-detect
+    profiles: [core]
+    logging: *logging
+    depends_on:
+      es-init: { condition: service_completed_successfully }
+      napalm-logs: { condition: service_healthy }
+    environment:
+      - ES_URL=${ES_URL:-http://elasticsearch:9200}
+      - ES_USER=push_detect
+      - ES_PASSWORD=${PUSH_DETECT_ES_PASSWORD:?}
+      - NAPALM_LOGS_ADDRESS=napalm-logs
+      - NAPALM_LOGS_PUBLISH_PORT=49017
+    mem_limit: 256m
+    volumes:
+      - ./collector:/collector:ro
+    working_dir: /collector
+    command: ["python3", "/collector/pushdetect.py"]
+    networks: [clab]
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime('/tmp/heartbeat') < 180 else 1)\""]
       interval: 30s

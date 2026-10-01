@@ -1,25 +1,36 @@
 # napalm-logs profile: Nokia SR Linux
 #
 # napalm-logs ships profiles for eos, fortinet, huawei, ios, iosxr, junos,
-# netiron, nxos, opengear and sonic. There is none for SR Linux, which is
-# why this lab detects faults by polling with Salt beacons -- about seven
-# seconds -- rather than by consuming pushed events, which would be
-# sub-second.
+# netiron, nxos, opengear and sonic. There is none for SR Linux. This is one.
 #
-# Every `line` and `values` in this directory was written against messages
-# actually captured from the lab's routers into Elasticsearch, not from
-# the documentation. The raw sample is quoted above each one.
+# SR Linux emits RFC 5424 and then carries a SECOND, SR Linux-specific header
+# inside the message body. A real datagram, captured off the wire:
 #
-# SR Linux emits RFC 5424. Its structured-data field is a bare "-", and the
-# message body then carries a second, SR Linux-specific header:
+#   <182>1 2026-09-30T03:43:36.552123+00:00 srl3 sr_net_inst_mgr 2495 - - netinst|2495|2495|00042|W: The interface ethernet-1/1.0 ...
+#    ^pri ^v ^timestamp                     ^host ^APP-NAME      ^pid ^mid ^sd ^subsystem ^pid ^tid ^seq ^sev  ^text
 #
-#   <134>1 2026-09-21T04:28:49.123456+00:00 srl1 netinst 2502 - -  netinst|2502|2502|00049|N: The interface ...
-#   ^pri ^ver ^timestamp                    ^host ^app    ^pid      ^app   ^pid ^tid ^seq  ^sev  ^text
+# Two things about that line are easy to get wrong, and neither shows up
+# when a reconstructed sample is replayed through the parser -- only when
+# the daemon is pointed at live routers.
 #
-# napalm-logs matches each message file on `tag`, so `tag` is bound to the
-# RFC 5424 APP-NAME -- netinst, bgp, isis, bfd, lldp -- and the per-message
-# files match the text after the inner header. That inner header is
-# consumed here rather than in every file.
+# 1. The RFC 5424 APP-NAME is the PROCESS -- sr_net_inst_mgr, sr_bgp_mgr,
+#    sr_isis_mgr, sr_bfd_mgr, sr_lldp_mgr, sr_mgmt_server. It is NOT the
+#    subsystem name. The subsystem -- netinst, bgp, isis, bfd, lldp, mgmt --
+#    appears only in the inner header.
+#
+#    napalm-logs matches every message file on `tag`, and the subsystem is
+#    what actually distinguishes one message type from another, so `tag` is
+#    bound to the INNER name and the process name is captured and discarded.
+#    Binding it the other way round means each message file keys on a process
+#    name, which tells you which binary logged rather than what happened.
+#
+# 2. There is exactly ONE space between the structured-data "-" and the inner
+#    header, not two. A prefix that expects two matches nothing at all, and
+#    napalm-logs reports the outer APP-NAME as an unconfigured tag -- which
+#    reads like a missing message file rather than a broken prefix.
+#
+# Every `line` and `values` in this directory is written against messages
+# captured from real routers. The raw sample is quoted above each one.
 
 prefixes:
   - time_format: "%Y-%m-%dT%H:%M:%S.%f%z"
@@ -30,14 +41,17 @@ prefixes:
       timeSecfrac: (\d+)
       timeOffset: ((?:\+|\-)\d{2}:\d{2})
       host: ([^ ]+)
-      tag: ([^ ]+)
+      # The RFC 5424 APP-NAME: the SR Linux process. Captured so the prefix
+      # matches, then discarded -- see note 1 above.
+      processName: ([^ ]+)
       processId: ([^ ]+)
       messageId: ([^ ]+)
       structuredData: ([^ ]+)
-      # the SR Linux-specific inner header, discarded
-      srlApp: (\w+)
+      # The inner header. `tag` is the subsystem, and it is what every
+      # message file in this directory matches on.
+      tag: (\w+)
       srlPid: (\d+)
       srlTid: (\d+)
       srlSeq: (\d+)
       severity_label: (\w)
-    line: '{version} {date}T{time}.{timeSecfrac}{timeOffset} {host} {tag} {processId} {messageId} {structuredData}  {srlApp}|{srlPid}|{srlTid}|{srlSeq}|{severity_label}: '
+    line: '{version} {date}T{time}.{timeSecfrac}{timeOffset} {host} {processName} {processId} {messageId} {structuredData} {tag}|{srlPid}|{srlTid}|{srlSeq}|{severity_label}: '

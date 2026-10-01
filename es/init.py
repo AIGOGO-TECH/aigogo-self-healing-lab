@@ -9,10 +9,11 @@ Three jobs:
   2. ILM policies     -- so the disk does not fill silently
   3. roles and users  -- one per component, least privilege
 
-Job 1 is the one with history behind it. A Salt job return whose ``fun_args``
-was a list, where an earlier document had it as an object, put the index into
-a mapping conflict that rejected *every* subsequent event for two hours, with
-no error anywhere except a 400 the returner swallowed. See docs/lessons.md.
+Job 1 matters most. Without a template, Elasticsearch infers the mapping
+from the first document it receives; a later document whose field is a list
+where the first had an object is then rejected for conflicting with a
+mapping nobody chose, and the rejection appears only in a bulk response
+body that callers routinely discard.
 """
 import base64
 import json
@@ -152,6 +153,7 @@ def main():
         "stats_writer": "STATS_ES_PASSWORD",
         "log_writer": "LOGS_ES_PASSWORD",
         "watchdog": "WATCHDOG_ES_PASSWORD",
+        "push_detect": "PUSH_DETECT_ES_PASSWORD",
     }
     # Checked up front rather than one at a time: a half-created user set
     # is worse than none, because the missing user's component then fails

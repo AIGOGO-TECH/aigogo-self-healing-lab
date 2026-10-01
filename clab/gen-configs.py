@@ -88,6 +88,12 @@ if not ISIS_KEY:
 # restart, and nobody notices because the symptom is silence.
 SYSLOG_SERVER = os.environ.get("MGMT_PREFIX", "172.30.30") + ".30"
 SYSLOG_PORT = 5514
+# The push detection path gets its own destination rather than a copy relayed
+# from the first. The routers support several remote-servers, so each consumer
+# owns a port and neither can lose the other's traffic -- and a relay in
+# between would be one more process whose silence looks like health.
+NAPALM_LOGS_SERVER = os.environ.get("MGMT_PREFIX", "172.30.30") + ".31"
+NAPALM_LOGS_PORT = 5515
 
 # One plan. Everything below is derived from it.
 PLAN = {
@@ -604,6 +610,13 @@ def render_pillar():
             "isis_keychain": "isis-core",
             "syslog_server": SYSLOG_SERVER,
             "syslog_port": SYSLOG_PORT,
+            # Rendered as a second remote-server by golden_config. Both
+            # destinations are listed so the template does not have to know
+            # how many consumers there are.
+            "syslog_destinations": [
+                {"host": SYSLOG_SERVER, "port": SYSLOG_PORT},
+                {"host": NAPALM_LOGS_SERVER, "port": NAPALM_LOGS_PORT},
+            ],
             "rr_cluster_id": "10.255.0.255",
             "devices": {
                 n: {

@@ -78,13 +78,20 @@ containerlab's management bridge, which the stack shares.
 | .2 – .19 | Docker's dynamic pool for the stack's own containers |
 | .21 – .24 | the routers, pinned in `clab/topo.yml` |
 | **.30** | **reserved: the syslog collector** |
+| **.31** | **reserved: napalm-logs, the push detection path** |
 
 The routers are pinned because containerlab reassigns addresses on every
 redeploy, which silently broke every proxy-minion three times before it was
 noticed. The syslog collector is pinned for the same reason from the other
 direction: the devices are configured to send there, and a syslog
-destination that moves stops working on the next restart. .30 sits clear of
-both the dynamic pool, which grows upward from .2, and the device range.
+destination that moves stops working on the next restart. .30 and .31 sit
+clear of both the dynamic pool, which grows upward from .2, and the device
+range.
+
+Two syslog destinations, not one relayed to the other: .30 files every message
+for a human to read, .31 is napalm-logs, which structures the ones it has a
+profile for. Each owns a port, so neither consumer can drop the other's
+traffic.
 
 ### The transit link — 198.51.100.0/31
 
