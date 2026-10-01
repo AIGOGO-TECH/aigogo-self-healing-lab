@@ -90,14 +90,11 @@ fi
 # clab-selfheal network that everything else attaches to, which is why it
 # is first and not merely early.
 # --- 0b. render the device configs -------------------------------------
-# These used to be committed, which had two consequences and both of them
-# were wrong. The IS-IS authentication key ended up in the repository
-# regardless of where it was read from, and anyone who changed MGMT_PREFIX
-# got a topology on one subnet and startup-configs on another.
-#
-# Nothing ran this generator. It was a manual step that existed only in
-# the author's shell history, which is the least reproducible place there
-# is for a step a clone depends on.
+# Rendered here rather than committed. A committed config puts the IS-IS
+# authentication key in the repository whatever it was read from, and pins
+# MGMT_PREFIX for everyone who clones -- a topology on one subnet with
+# startup-configs on another. Running the generator from bootstrap is also
+# what stops it being a manual step a clone depends on.
 STEP="rendering the device configs"
 say "rendering the device configs from clab/gen-configs.py"
 ( set -a; . ./.env; set +a; python3 clab/gen-configs.py ) | sed 's/^/  /'
@@ -320,10 +317,9 @@ converge() {   # converge <device> <state>
     fi
     [ "$attempt" = 1 ] && { echo "  $1: first attempt failed, retrying in 15s"; sleep 15; }
   done
-  # This used to end here, on a grep -- which succeeds when it matches, so
-  # a convergence that failed both attempts printed three lines into a wall
-  # of output and returned 0. The same disease as the swallowed n8n import
-  # (lesson 63): a step that cannot fail cannot be trusted to have run.
+  # Returns non-zero, rather than ending on a grep whose exit status
+  # reports whether it matched. A step that cannot fail cannot be trusted
+  # to have run.
   echo "  $1: $2 failed twice" >&2
   printf '%s' "$out" | grep -E "Succeeded|Failed|Comment" | head -3 >&2
   return 1

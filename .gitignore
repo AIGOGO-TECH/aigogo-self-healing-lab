@@ -26,3 +26,13 @@ clab/configs/*.cfg
 clab/configs/srl4-*
 netbox/plan.json
 salt/pillar/fabric.sls
+
+# soak.sh widens the change ceilings for the duration of a run and keeps the
+# originals beside the files it edits. .env.soak-backup is a COPY OF .env --
+# committing one would publish every secret in it, so this is a guard against
+# the one mistake that cannot be taken back once pushed.
+*.soak-backup
+
+# Soak results. Measurements of a particular run on a particular laptop, not
+# repository content; the numbers worth keeping go in the docs with their n.
+soak-*.tsv

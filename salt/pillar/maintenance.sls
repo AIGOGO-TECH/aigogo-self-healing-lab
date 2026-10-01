@@ -20,6 +20,11 @@ maintenance:
   # A device that drifts back three times in an hour does not need a fourth
   # push; it needs a human. Without this the drift reactor re-applies every
   # 20 seconds indefinitely.
+  # This is Salt's ceiling and it is the authoritative one: it refuses the
+  # change itself. n8n enforces a second, independent ceiling before it
+  # asks the model anything, and that one reads MAX_CHANGES_PER_HOUR from
+  # .env. Raising only this number changes half the system -- the other
+  # half goes on refusing, with a reason that reads exactly like this one.
   max_changes_per_hour: 3
 
   # Blast radius. The per-device ceiling above is the wrong instrument for

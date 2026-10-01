@@ -28,7 +28,7 @@
         "url": "={{ $env.ES_URL }}/napalm-2*/_search",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"size\": 20,\n  \"sort\": [{\"data._stamp\": {\"order\": \"desc\", \"unmapped_type\": \"date\"}}],\n  \"query\": {\"bool\": {\"must\": [\n    {\"match\": {\"data.fun\": \"state.apply\"}},\n    {\"bool\": {\"should\": [\n      {\"match\": {\"data.fun_args\": \"sync_from_netbox\"}},\n      {\"match\": {\"data.fun_args\": \"sync_from_pillar\"}}\n    ], \"minimum_should_match\": 1}},\n    {\"range\": {\"data._stamp\": {\"gte\": \"now-2m\"}}}\n  ]}}\n}",
+        "jsonBody": "{\n  \"size\": 20,\n  \"sort\": [{\"data._stamp\": {\"order\": \"desc\", \"unmapped_type\": \"date\"}}],\n  \"query\": {\"bool\": {\"must\": [\n    {\"match\": {\"data.fun\": \"state.apply\"}},\n    {\"range\": {\"data._stamp\": {\"gte\": \"now-2m\"}}}\n  ]}}\n}",
         "options": {},
         "sendHeaders": true,
         "headerParameters": {
@@ -51,7 +51,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const hits = $input.first().json.hits.hits;\nconst out = [];\nfor (const h of hits) {\n  const d = h._source.data;\n  const ret = d.return;\n  if (!ret) continue;\n  for (const key of Object.keys(ret)) {\n    const st = ret[key];\n    const diff = st.changes && st.changes.diff;\n    if (diff && diff.trim()) {\n      out.push({\n        json: {\n          jid: d.jid,\n          minion: d.id,\n          diff,\n          stamp: d._stamp,\n          es_id: h._id,\n        },\n      });\n    }\n  }\n}\nreturn out;"
+        "jsCode": "// Which state ran is decided HERE, not in the Elasticsearch query.\n//\n// data.fun_args carries the state name, and it is not searchable: Salt puts a\n// list of strings in it for a plain state.apply and a list containing an\n// object when pillar overrides are passed, so no single mapping accepts both\n// and the field is deliberately left unmapped. dynamic:false still stores it\n// in _source, so it is readable here -- it just cannot be filtered on by the\n// query. The query narrows to state.apply in the last two minutes, which is\n// at most a handful of documents, and this does the rest.\nconst WANTED = ['sync_from_netbox', 'sync_from_pillar'];\n\nconst hits = $input.first().json.hits.hits;\nconst out = [];\nfor (const h of hits) {\n  const d = h._source.data;\n  const args = JSON.stringify(d.fun_args || '');\n  if (!WANTED.some(s => args.includes(s))) continue;\n  const ret = d.return;\n  if (!ret) continue;\n  for (const key of Object.keys(ret)) {\n    const st = ret[key];\n    const diff = st.changes && st.changes.diff;\n    if (diff && diff.trim()) {\n      out.push({\n        json: {\n          jid: d.jid,\n          minion: d.id,\n          diff,\n          stamp: d._stamp,\n          es_id: h._id,\n        },\n      });\n    }\n  }\n}\nreturn out;"
       },
       "id": "extract_diffs",
       "name": "Extract healed diffs",

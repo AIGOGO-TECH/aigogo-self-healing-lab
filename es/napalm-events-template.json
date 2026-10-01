@@ -1,6 +1,16 @@
 {
-  "index_patterns": ["napalm-2*"],
+  "index_patterns": [
+    "napalm-2*"
+  ],
   "priority": 200,
+  "_meta": {
+    "why_dynamic_false": [
+      "Salt's event bus carries arbitrary payloads under `data`, and their SHAPE varies by event type. A beacon fault sends data.state as a string (the remediation state name). A batch job progress event sends data.state as a nested object of per-minion returns. Elasticsearch maps a field once, from whichever document arrives first, and rejects every later document that disagrees -- with a 400 the Salt returner logs at INFO and moves on.",
+      "The consequence is not a visible failure. Beacons go on firing, the audit trail goes on filling, every container stays healthy, and the fault events simply stop reaching the index the alert rule reads. Detection appears to work and nothing is ever remediated.",
+      "This was first fixed by naming the fields known to be unstable -- fun_args, arg, return -- which is a list that can only ever be complete in hindsight. data.state was not on it. `dynamic: false` replaces the list with a rule: only the fields named below are indexed, everything else is stored in _source and cannot conflict with anything.",
+      "data.fun is mapped because it is always a string (the Salt function name) and two consumers search it: the heal-explainer workflow and the Salt Info dashboard. data.fun_args is deliberately NOT mapped and is NOT searchable. It is the field that caused the first incident, and no Elasticsearch type accepts every shape Salt sends in it -- measured: `text` takes a list of strings and a bare string but rejects a list containing an object, which is exactly what state.apply with pillar overrides sends; `flattened` takes the object and rejects both the list and the string. Anything that needs to filter on it reads it out of _source, where dynamic:false still stores it, or uses napalm-audit instead -- which is the record of what changed and has stable mappings by construction."
+    ]
+  },
   "template": {
     "settings": {
       "index": {
@@ -10,11 +20,75 @@
     },
     "mappings": {
       "properties": {
+        "tag": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 512
+            }
+          }
+        },
         "data": {
+          "dynamic": false,
           "properties": {
-            "fun_args": { "type": "object", "enabled": false },
-            "arg":      { "type": "object", "enabled": false },
-            "return":   { "type": "object", "enabled": false }
+            "_stamp": {
+              "type": "date"
+            },
+            "id": {
+              "type": "text",
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 256
+                }
+              }
+            },
+            "device": {
+              "type": "text",
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 256
+                }
+              }
+            },
+            "fault": {
+              "type": "text",
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 256
+                }
+              }
+            },
+            "interface": {
+              "type": "text",
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 256
+                }
+              }
+            },
+            "trace_id": {
+              "type": "text",
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 256
+                }
+              }
+            },
+            "fun": {
+              "type": "text",
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 256
+                }
+              }
+            }
           }
         }
       }

@@ -39,7 +39,11 @@ bad() {
   [ -n "${3:-}" ] && printf "         ${D}fix: %s${N}\n" "$3"
   return 0
 }
-warn() { printf "  ${Y}[warn]${N} %-34s %s\n" "$1" "${2:-}"; }
+warn() {
+  printf "  ${Y}[warn]${N} %-34s %s\n" "$1" "${2:-}"
+  [ -n "${3:-}" ] && printf "         ${D}%s${N}\n" "$3"
+  return 0
+}
 sec()  { [ "$QUIET" = 1 ] || printf "\n${B}%s${N}\n" "$1"; }
 
 [ -f .env ] || { echo "no .env -- run ./scripts/gen-secrets.sh first" >&2; exit 1; }
@@ -320,7 +324,38 @@ fi
 RULES=$(curl -s --max-time 10 -u "${GRAFANA_ADMIN_USER:-admin}:$GRAFANA_ADMIN_PASSWORD" \
         "http://${BIND_ADDR:-127.0.0.1}:3000/api/v1/provisioning/alert-rules" 2>/dev/null)
 if printf '%s' "$RULES" | grep -q 'Network fault detected'; then
-  ok "grafana rule is provisioned"
+  # Provisioned is not the same as working. The rule can sit in NoData for
+  # hours -- because the query returns nothing, or the datasource is refusing
+  # it -- while still being present, still being healthy by its own account,
+  # and never notifying anything. That is indistinguishable from a quiet
+  # network unless you ask which of the two it is.
+  RSTATE=$(curl -s --max-time 10 -u "${GRAFANA_ADMIN_USER:-admin}:$GRAFANA_ADMIN_PASSWORD" \
+    "http://${BIND_ADDR:-127.0.0.1}:3000/api/prometheus/grafana/api/v1/rules" 2>/dev/null \
+    | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print('unreadable ?'); raise SystemExit
+for g in d.get('data', {}).get('groups', []):
+    for r in g.get('rules', []):
+        alerts = r.get('alerts') or []
+        nodata = any('NoData' in str(a.get('state', '')) for a in alerts)
+        print(f\"{r.get('health')} {r.get('state')} {'nodata' if nodata else 'data'}\")
+        raise SystemExit
+print('missing ?')" 2>/dev/null || echo 'unreadable ?')
+  RHEALTH=$(printf '%s' "$RSTATE" | cut -d' ' -f1)
+  RDATA=$(printf '%s' "$RSTATE" | cut -d' ' -f3)
+  case "$RHEALTH" in
+    ok) if [ "$RDATA" = nodata ]; then
+          warn "grafana rule is evaluating" "present and healthy, but its last evaluation was NoData" \
+               "if a fault is open right now this is a real break: ./scripts/check-lab.sh after ./scripts/break.sh interface srl3"
+        else
+          ok "grafana rule is evaluating" "$RSTATE"
+        fi ;;
+    *)  bad "grafana rule is evaluating" "health=$RHEALTH" \
+            "check the datasource: docker logs grafana | tail -20" ;;
+  esac
 else
   bad "grafana rule is provisioned" "the detector has no trigger" \
       "docker compose restart grafana"
@@ -342,15 +377,157 @@ fi
 # Salt's own events, which is what the Grafana rule actually counts. A
 # healthy Elasticsearch with an empty event index means the master-side
 # returner is not running, not that the network is quiet.
+# Time-bounded, and on the event bus's own clock (data._stamp, not
+# @timestamp -- Salt events have no @timestamp field, so a range query on it
+# silently matches nothing and reports a healthy stack as dead).
+#
+# A lifetime count passes forever once one event has ever landed. This index
+# stopped accepting beacon fault events for over an hour while that check went
+# on reporting five thousand indexed, and nothing else noticed either.
 EV=$(docker exec salt-master curl -s --max-time 10 -u "elastic:$ELASTIC_PASSWORD" \
-     'http://elasticsearch:9200/napalm-*/_count' 2>/dev/null)
+     -X POST 'http://elasticsearch:9200/napalm-2*/_count' \
+     -H 'Content-Type: application/json' \
+     -d '{"query":{"range":{"data._stamp":{"gte":"now-10m"}}}}' 2>/dev/null)
 if printf '%s' "$EV" | grep -q '"count"'; then
   EVC=$(printf '%s' "$EV" | python3 -c 'import sys,json;print(json.load(sys.stdin)["count"])')
-  if [ "$EVC" -gt 0 ]; then ok "salt events are landing" "$EVC indexed"
-  else bad "salt events are landing" "index is empty -- detection is dead" \
-           "docker exec salt-master salt-run saltutil.sync_returners && docker compose restart salt-master"; fi
+  if [ "${EVC:-0}" -gt 0 ]; then ok "salt events are landing" "$EVC in the last 10m"
+  else bad "salt events are landing" "nothing in 10m -- the returner is dead or being rejected" \
+           "docker logs salt-master | grep 'status:4' | tail"; fi
 else
   bad "salt events are landing" "cannot read the index" "docker compose restart elasticsearch"
+fi
+
+# Elasticsearch rejecting a write is the failure with no symptom: the Salt
+# returner logs the 400 at INFO and carries on, beacons go on firing, the
+# audit trail goes on filling, and the only thing that stops is the alert
+# rule's view of the world. It cost an hour of a soak run before anything
+# noticed, so it gets its own check rather than being inferred from a count.
+# Writes only, and not 404. The returner HEADs the dated index before
+# creating it, so the first event of every new day logs a 404 that is not a
+# rejection at all -- and a check that cries wolf every morning is a check
+# nobody reads by the end of the week.
+REJ=$(docker logs --since 10m salt-master 2>&1 \
+      | grep -E '(PUT|POST) ' | grep -cE 'status:(400|409|413|422)' || true)
+if [ "${REJ:-0}" = 0 ]; then
+  ok "elasticsearch is accepting salt events" "no rejected writes in 10m"
+else
+  bad "elasticsearch is accepting salt events" "$REJ writes rejected in the last 10m" \
+      "docker logs salt-master | grep -E '(PUT|POST) .*status:4' | tail -3   (usually a mapping conflict -- see es/napalm-events-template.json)"
+fi
+
+# --- the push detection path ----------------------------------------------
+# Running alongside the beacons to be measured against them, not to replace
+# them. Every check here is about whether the measurement is still being
+# taken; none of them affects whether the lab can heal, because the push path
+# is not allowed to act.
+for c in napalm-logs push-detect; do
+  ST=$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo missing)
+  case "$ST" in
+    running) ok "$c is running" "$ST" ;;
+    missing) bad "$c is running" "no such container" \
+                 "docker compose up -d $c" ;;
+    *)       bad "$c is running" "$ST" "docker compose restart $c" ;;
+  esac
+done
+
+# Both destinations on every router. One is the collector that files messages
+# for a human, the other is napalm-logs. A router with only the first is a
+# router the push path cannot see, and it looks identical to a quiet one.
+DESTS=0
+for d in srl1 srl2 srl3; do
+  # Not N: that is the ANSI reset this script prints after every colour, and
+  # assigning to it here turned every [ok] mark after this loop into a stray
+  # "2" on the screen. A checker whose own output is corrupted is a checker
+  # nobody reads.
+  NDEST=$(docker exec "clab-selfheal-$d" sr_cli "info /system logging" 2>/dev/null \
+          | grep -c 'remote-server ' || true)
+  [ "${NDEST:-0}" -ge 2 ] && DESTS=$((DESTS + 1))
+done
+if [ "$DESTS" = 3 ]; then
+  ok "the routers log to both consumers" "3 devices, 2 destinations each"
+else
+  bad "the routers log to both consumers" "$DESTS of 3 have both" \
+      "docker exec salt-master salt 'srl*' state.apply golden_config"
+fi
+
+# Behavioural, like the heartbeat check: a bound socket and a running process
+# prove the daemon started, not that a single message has ever been parsed. A
+# profile that matches nothing produces exactly the same container state as
+# one that matches everything.
+# Time-bounded on purpose. A lifetime count passes forever once one message
+# has ever been parsed, so it would go on reporting success with napalm-logs
+# deleted. The window is what makes this an assertion about now.
+OBS=$(docker exec salt-master curl -s --max-time 10 -u "elastic:$ELASTIC_PASSWORD" \
+      -X POST 'http://elasticsearch:9200/napalm-audit/_count' \
+      -H 'Content-Type: application/json' \
+      -d '{"query":{"bool":{"filter":[{"term":{"action":"fault.observed"}},
+           {"range":{"@timestamp":{"gte":"now-24h"}}}]}}}' 2>/dev/null)
+if printf '%s' "$OBS" | grep -q '"count"'; then
+  OBC=$(printf '%s' "$OBS" | python3 -c 'import sys,json;print(json.load(sys.stdin)["count"])')
+  if [ "${OBC:-0}" -gt 0 ]; then
+    ok "the push path parsed something recently" "$OBC observations in 24h"
+  else
+    warn "the push path parsed something recently" "nothing in 24h" \
+         "if the network has been quiet this is expected; if not: docker logs napalm-logs | grep 'not configured'"
+  fi
+else
+  bad "the push path parsed something recently" "cannot read the audit trail" \
+      "docker compose restart elasticsearch"
+fi
+
+# The change ceilings the minions see must be the ones this repository ships.
+# soak.sh widens them deliberately and restores them on exit, but an EXIT trap
+# does not survive a SIGKILL -- and a lab running wide ceilings looks completely
+# normal while every measurement taken on it is against a different gate.
+# From git, not from the working tree. A soak widens the file AND the pillar
+# together, so comparing the two to each other agrees with itself; the only
+# thing that caught it was the leftover backup, and `rm *.soak-backup` after a
+# SIGKILL defeats that. HEAD is the only reference that cannot be widened by
+# the thing being checked. Falls back to the working tree outside a git
+# checkout, which is weaker but better than skipping the check.
+WANT_SRC=$(git show HEAD:salt/pillar/maintenance.sls 2>/dev/null \
+           || cat salt/pillar/maintenance.sls)
+WANT_H=$(printf '%s' "$WANT_SRC" | grep -E '^  max_changes_per_hour:' | tr -dc '0-9')
+WANT_D=$(printf '%s' "$WANT_SRC" | grep -E '^  max_devices_per_window:' | tr -dc '0-9')
+GOT=$(docker exec salt-master salt srl1 pillar.get maintenance --out=json --static 2>/dev/null \
+      | python3 -c "
+import sys, json
+try:
+    m = json.load(sys.stdin)['srl1']
+    print(f\"{m.get('max_changes_per_hour')} {m.get('max_devices_per_window')} {m.get('enabled')}\")
+except Exception:
+    print('? ? ?')" 2>/dev/null || echo '? ? ?')
+GOT_H=$(printf '%s' "$GOT" | cut -d' ' -f1)
+GOT_D=$(printf '%s' "$GOT" | cut -d' ' -f2)
+GOT_F=$(printf '%s' "$GOT" | cut -d' ' -f3)
+if [ -e salt/pillar/maintenance.sls.soak-backup ] || [ -e .env.soak-backup ]; then
+  bad "the change gate is the committed one" "a soak run left a ceiling widened" \
+      "mv salt/pillar/maintenance.sls.soak-backup salt/pillar/maintenance.sls; mv .env.soak-backup .env; docker exec salt-master salt 'srl*' saltutil.refresh_pillar; docker compose up -d n8n"
+elif [ "$GOT_H" = "$WANT_H" ] && [ "$GOT_D" = "$WANT_D" ]; then
+  if [ "$GOT_F" = "True" ]; then
+    warn "the change gate is the committed one" "$GOT_H/hour, $GOT_D devices -- but the FREEZE is on" \
+         "nothing will be remediated until maintenance:enabled is false"
+  else
+    # The SECOND ceiling. n8n enforces its own before it asks the model, from
+    # MAX_CHANGES_PER_HOUR -- so the two can disagree, and when they do the
+    # symptom is faults that are detected perfectly and never remediated, with
+    # a refusal reason that reads like the pillar's.
+    # An unset variable is not a disagreement: the workflow's own fallback is
+    # 3, so an absent env var genuinely means 3.
+    N8N_MAX=$(docker exec n8n printenv MAX_CHANGES_PER_HOUR 2>/dev/null || true)
+    [ -n "$N8N_MAX" ] || N8N_MAX=3
+    if [ "$N8N_MAX" = "$GOT_H" ]; then
+      ok "the change gate is the committed one" "$GOT_H changes/hour, $GOT_D devices/window, n8n breaker agrees"
+    else
+      bad "the change gate is the committed one" \
+          "salt says $GOT_H/hour, the n8n breaker says $N8N_MAX" \
+          "set MAX_CHANGES_PER_HOUR=$GOT_H in .env, then: docker compose up -d n8n"
+    fi
+  fi
+else
+  bad "the change gate is the committed one" \
+      "minions see $GOT_H/$GOT_D, the pillar says $WANT_H/$WANT_D" \
+      "docker exec salt-master salt 'srl*' saltutil.refresh_pillar"
 fi
 
 # --- verdict --------------------------------------------------------------
