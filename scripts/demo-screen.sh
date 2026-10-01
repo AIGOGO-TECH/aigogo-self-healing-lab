@@ -8,12 +8,22 @@
 # not on a projector. Four gives ~114 columns each.
 #
 #   ┌──────────────────────┬──────────────────────┐
-#   │ 1  FAULT             │ 2  DETECT            │
-#   │    you type here     │    the event bus     │
+#   │ 1  WHY / WHAT BROKE  │ 2  THE ROUTERS' LOG  │
 #   ├──────────────────────┼──────────────────────┤
-#   │ 3  THE STORY         │ 4  VERIFY            │
-#   │    audit trail       │    the device itself │
+#   │ 3  THE STORY         │ 4  THE DEVICES       │
+#   │    audit trail       │    or the policy     │
 #   └──────────────────────┴──────────────────────┘
+#
+# Nothing is typed into any of the four. The fault is injected from a fifth
+# window outside the recording frame, which frees pane 1 for the question
+# each fault class actually turns on:
+#
+#   heal       the blast-radius gate    — why the second fault is refused
+#   provision  the source of truth      — nobody typed this on a router
+#   leak       the provider's view      — the only account that settles it
+#
+# A pane holding a shell prompt is a pane spent on the presenter instead of
+# the audience, and it is the least informative quarter of the screen.
 #
 # Grafana and n8n had panes of their own and lost them, because the audit
 # trail says what they were there to say and says it better. Grafana's pane
@@ -23,8 +33,6 @@
 #     decision.made  accepted  n8n/llama3.1  "interface was administratively shut"
 #
 # which is the alert, the model, and its reasoning in one line.
-#
-# Pane 1 is the only one you type in. The other three run themselves.
 #
 # Everything is a terminal on purpose. Browser windows for Grafana and n8n
 # look impressive and read badly: they need logins, they reflow, and the
@@ -53,6 +61,19 @@ tmux kill-session -t "$SESSION" 2>/dev/null || true
 # message carries the trace id and the actor, its lines name the decision
 # that caused them. The event bus moved to watch-events.sh, still there
 # when you want it.
+# Pane 1 by fault class. Each is a script rather than an inline loop, so
+# it can be run on its own while rehearsing -- and so a mistake in it fails
+# where it can be read instead of inside a tmux send-keys string.
+if [ "$MODE" = provision ]; then
+    # Intent, opposite the devices converging to it in pane 4.
+    P1="while :; do out=\$(./scripts/show-intent.sh 2>/dev/null); clear; printf '%s\\n' \"\$out\"; sleep 6; done"
+else
+    # The counter that causes the refusal, visible before it trips.
+    # Slower cycle than the rest: it is three Salt calls through proxies,
+    # and the numbers it shows change on the scale of minutes, not seconds.
+    P1="while :; do out=\$(./scripts/show-gate.sh 2>/dev/null); clear; printf '%s\\n' \"\$out\"; sleep 8; done"
+fi
+
 P2="./scripts/watch-device.sh"
 
 # The story, not the rows.
@@ -75,22 +96,16 @@ P2="./scripts/watch-device.sh"
 # faults, and the one that gets REFUSED is the harder thing to believe.
 P3="./scripts/watch-heal.sh 10"
 
-# One interface shut always produces TWO faults: the device that was shut,
-# and the far end reporting its link down. The pane used to show only the
-# device named on the command line, so during a take the narrator could
-# not point at the other half of the story -- "cannot see what is
-# happening on srl1 ethernet-1/1" was the exact complaint, while srl1 was
-# the router being correctly refused.
+# All three routers, not just the one named on the command line. One shut
+# interface produces TWO faults -- the device that was shut and the far end
+# reporting its link down -- and the narrator has to be able to point at
+# both, because the one that gets REFUSED is the half worth believing.
+# Three short rows also avoid having to work out which neighbour sits on
+# the far end of which link.
 #
-# Three short rows instead of one long one. It is also robust: no need to
-# work out which neighbour is on the far end of which link.
-# Build the frame first, then clear and print it in one go.
-#
-# It used to clear and then fill, and filling means three docker execs
-# into three routers at a second or two each -- so the pane sat blank for
-# most of every cycle and looked like it was showing nothing at all. That
-# was the report: "the fourth pane shows one thing and never changes".
-# It was changing; it was mostly empty while it did.
+# Built into a variable first, then cleared and printed in one go: filling
+# it live means three docker execs at a second or two each, which leaves
+# the pane blank for most of every cycle and reads as showing nothing.
 P4="while :; do
  out=\$(printf '%-6s %-14s %s\\n' 'router' 'ethernet-1/1' 'IS-IS adj';
    for d in srl1 srl2 srl3; do
@@ -168,13 +183,7 @@ tmux select-layout -t "$SESSION:demo" tiled
 # After `tiled`, the indices are in reading order:
 #   0 top-left   1 top-right
 #   2 bottom-left  3 bottom-right
-if [ "$MODE" = provision ]; then
-    tmux send-keys -t "$SESSION:demo.0" "clear; echo '── 1  YOU TYPE HERE ──'; echo; echo '   ./scripts/bootstrap.sh'; echo; echo '   wait for: == converging the devices to their source of truth'; echo" C-m
-elif [ "$MODE" = leak ]; then
-    tmux send-keys -t "$SESSION:demo.0" "$P1" C-m
-else
-    tmux send-keys -t "$SESSION:demo.0" "clear; echo '── 1  YOU TYPE HERE ──'; echo; echo '   ./scripts/break.sh interface $DEV'; echo" C-m
-fi
+tmux send-keys -t "$SESSION:demo.0" "$P1" C-m
 # clear first: without it the pane keeps the shell prompt and the typed
 # command at the top for the whole recording. Panes 2 and 3 redraw
 # themselves every cycle, so only this streaming one needs it.
@@ -216,9 +225,24 @@ if [ "$ATTACH" = "0" ]; then
     echo "session '$SESSION' built, not attached"
     exit 0
 fi
-echo "attaching."
-echo "  click a pane to type in it; the focused pane has a green border"
-echo "  Ctrl-c stops a pane's loop    Ctrl-b then d detaches"
-echo "  tmux kill-session -t $SESSION"
+case "$MODE" in
+  provision) INJECT="./scripts/bootstrap.sh" ;;
+  leak)      INJECT="./scripts/break.sh leak $DEV" ;;
+  *)         INJECT="./scripts/break.sh interface $DEV" ;;
+esac
+echo
+echo "all four panes run themselves. Open a SECOND terminal window, keep it"
+echo "outside the recording frame, and inject the fault from there:"
+echo
+echo "    cd $(pwd)"
+echo "    $INJECT"
+echo
+echo "or, without leaving this window, from anywhere:"
+echo
+echo "    tmux send-keys -t $SESSION:demo.0 C-c"
+echo "    tmux send-keys -t $SESSION:demo.0 '$INJECT' C-m"
+echo
+echo "  the focused pane has a green border    Ctrl-c stops a pane's loop"
+echo "  Ctrl-b then d detaches                tmux kill-session -t $SESSION"
 sleep 1
 tmux attach -t "$SESSION"
