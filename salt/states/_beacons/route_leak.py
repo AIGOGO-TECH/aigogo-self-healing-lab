@@ -1,10 +1,22 @@
 """Detect when this router is announcing something it should not be.
 
-This is the fault every operator in the room has either caused or been on
-the receiving end of, and the one their existing tooling cannot see: a
-route leak. RFC 7908 has a whole taxonomy of them, and they keep happening
--- Pakistan/YouTube in 2008, Verizon/Cloudflare in 2019 -- because of a
-property nothing else in this repo checks for.
+A route leak: an announcement with a perfectly valid origin, propagated
+past the scope it was meant for. RFC 7908 has a taxonomy of them, and they
+keep happening -- Google into NTT in 2017, which took much of Japan off the
+internet for hours, and DQE through Verizon in 2019.
+
+(Not the 2008 Pakistan Telecom / YouTube incident, which is cited for this
+far more often than it should be. That was a more-specific announced by
+someone who did not hold the space -- a mis-origination, which RPKI origin
+validation is designed to catch. A leak has the right origin and the wrong
+reach, which is why ROV does not stop one.)
+
+What makes a leak worth a detector of its own here is a property nothing
+else in this repo checks for.
+
+There is plenty of tooling that sees leaks -- BMP streams the adj-rib-out
+this beacon polls, and ARTEMIS, BGPalerter and the commercial monitors all
+watch for them from the outside. The point is narrower and about this lab:
 
 **Every other detector in this lab compares configuration to intent.**
 config_drift watches descriptions, config_drift_golden watches the protocol

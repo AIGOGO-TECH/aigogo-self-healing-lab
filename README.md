@@ -181,6 +181,48 @@ handled. That is what the outcome checks above are for: a remediation that
 repairs something has to prove the network recovered, not that the push
 returned success.
 
+## What this lab does not do
+
+The route-leak case invites a fair question from anyone who runs a network:
+there are standard controls for this, so where are they? They are not here,
+and the scope is deliberate rather than accidental.
+
+**RFC 9234 BGP Roles and the Only-To-Customer attribute** are the actual fix.
+A session declares whether the peer is a customer, a provider, a peer or an
+RS, the OTC attribute is set accordingly, and a leak is then detected and
+rejected by the receiving router with no monitoring involved at all. Nothing
+in this lab substitutes for that. If you can deploy OTC on a session, deploy
+it; what this lab is for is the networks that cannot yet, which is still most
+of them, and the question of how you find out when one of them leaks.
+
+**RPKI origin validation** does not stop leaks, and it is worth being precise
+about why, because the two get conflated. ROV answers "is this AS entitled to
+originate this prefix?" A leak has a perfectly entitled origin and the wrong
+reach. ROV is essential and it is orthogonal; this lab implements neither it
+nor the ASPA work that does address path scope.
+
+**BMP** — RFC 7854, with adj-rib-out monitoring in RFC 8671 — is how the data
+this lab polls for should be obtained in production: the router streams its
+post-policy adj-rib-out to a collector, rather than something asking it every
+thirty seconds. The SR Linux container image used here has no BMP in its
+schema, which is why the beacon polls. On real hardware, this detector should
+be a BMP consumer.
+
+**MANRS** is the frame most of this belongs in. The export policy, the bogon
+prefix-set and the 1000-prefix limit on the transit session are Action 1,
+filtering, done at the scale of one customer edge. The lab does not implement
+anti-spoofing, coordination or global validation data — Actions 2, 3 and 4.
+
+**IRR** is where an export set comes from in a real network, and where it gets
+cross-checked. Here it comes from NetBox, because the point being made is
+about a source of truth and a device disagreeing, not about which registry
+holds the truth. A production version of this reconciles the two.
+
+None of the above is hard to add to a lab. They are left out so that what is
+here can be read in an afternoon, and because the thing being demonstrated —
+that a detector comparing configuration to intent is structurally blind to a
+valid configuration behaving wrongly — is true whether or not OTC is deployed.
+
 ## Who changed what, and when
 
 Every automated change is attributable end to end. A `trace_id` is minted
@@ -367,10 +409,9 @@ something looks wrong.
 
 Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
-Use it, change it, run it in production if you are brave. The licence asks
-for one thing back: keep the NOTICE with it. There is a patent grant in
-both directions, which is the practical reason to prefer Apache over MIT
-for anything a company might build on.
+Use it and change it. The licence asks for one thing back: keep the NOTICE
+with it. There is a patent grant in both directions, which is the practical
+reason to prefer Apache over MIT for anything a company might build on.
 
 The components this pulls in have their own licences, and three of them —
 Elasticsearch, Grafana and n8n — carry conditions worth reading before
